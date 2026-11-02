@@ -19,15 +19,21 @@ public static class Paths
     public static string OllamaDir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Ollama");
     public static string BundledServer => Path.Combine(AppContext.BaseDirectory, "server");
 
+    /// <summary>Downloads go to a folder only administrators can change.</summary>
+    public static string DownloadDir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Night Tech", "Downloads");
+
+    /// <summary>
+    /// Only the copy under Program Files is used: Private AI starts it as Windows itself (SYSTEM), so it must be somewhere
+    /// ordinary users can't change. A personal copy in a user's folder is never used.
+    /// </summary>
     public static string? FindOllama()
     {
-        var candidates = new[]
-        {
-            Path.Combine(OllamaDir, "ollama.exe"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Ollama", "ollama.exe"),
-        };
-        return candidates.FirstOrDefault(File.Exists);
+        var exe = Path.Combine(OllamaDir, "ollama.exe");
+        return File.Exists(exe) ? exe : null;
     }
+
+    public static bool PersonalOllamaExists =>
+        File.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Ollama", "ollama.exe"));
 }
 
 public sealed record SetupOptions(
@@ -118,30 +124,46 @@ public sealed class Installer
         string note = "";
         var exe = Paths.FindOllama();
         Directory.CreateDirectory(Paths.ModelsDir);
-        // Everyone on this computer (and the startup task) shares one models folder.
-        Proc.Run(Proc.Sys("icacls.exe"), $"\"{Paths.ModelsDir}\" /grant *S-1-5-32-545:(OI)(CI)M", TimeSpan.FromMinutes(1));
+        // One models folder for the whole computer. Only administrators and Windows can change it; everyone can read it.
+        var acl = Proc.Run(Proc.Sys("icacls.exe"), $"\"{Paths.ModelsDir}\" /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F /grant:r *S-1-5-32-544:(OI)(CI)F /grant:r *S-1-5-32-545:(OI)(CI)RX", TimeSpan.FromMinutes(2));
+        if (acl.ExitCode != 0) App.Log.Warn("Couldn't set the models folder permissions: " + acl.Output.Trim());
         Environment.SetEnvironmentVariable("OLLAMA_MODELS", Paths.ModelsDir, EnvironmentVariableTarget.Machine);
         Environment.SetEnvironmentVariable("OLLAMA_MODELS", Paths.ModelsDir, EnvironmentVariableTarget.Process);
 
         if (exe is null)
         {
-            var file = Path.Combine(Path.GetTempPath(), "NightTech", "OllamaSetup.exe");
-            Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+            Directory.CreateDirectory(Paths.DownloadDir);
+            var file = Path.Combine(Paths.DownloadDir, "OllamaSetup.exe");
             await DownloadAsync(Paths.OllamaDownload, file, "Downloading the AI engine", ct);
-            if (!Trust.IsSignedBy(file, "Ollama", out var signer))
+            ProcResult r;
+            // Keep the file open (others may read, nobody may write) from the signature check until it has run.
+            using (var hold = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read))
             {
-                File.Delete(file);
-                return (StepResult.Failed, $"The downloaded installer isn't signed by Ollama ({signer}), so it wasn't run.");
+                if (!Trust.IsSignedBy(file, "Ollama", out var signer))
+                {
+                    hold.Dispose();
+                    File.Delete(file);
+                    return (StepResult.Failed, $"The downloaded installer isn't signed by Ollama ({signer}), so it wasn't run.");
+                }
+                App.Log.Info($"AI engine installer signed by {signer}.");
+                _transfer.Report(new Transfer("Installing the AI engine", -1, "This takes a minute or two."));
+                r = await Task.Run(() => Proc.RunPlain(file, $"/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /DIR=\"{Paths.OllamaDir}\"",
+                    TimeSpan.FromMinutes(15), new Dictionary<string, string> { ["OLLAMA_MODELS"] = Paths.ModelsDir }), ct);
             }
-            _transfer.Report(new Transfer("Installing the AI engine", -1, "This takes a minute or two."));
-            var r = await Task.Run(() => Proc.Run(file, $"/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /DIR=\"{Paths.OllamaDir}\"",
-                TimeSpan.FromMinutes(15), env: new Dictionary<string, string> { ["OLLAMA_MODELS"] = Paths.ModelsDir }), ct);
             try { File.Delete(file); } catch (IOException) { }
             exe = Paths.FindOllama();
-            if (exe is null) return (StepResult.Failed, $"The AI engine installer finished (code {r.ExitCode}) but ollama.exe wasn't found.");
-            note = "Installed. ";
+            if (exe is null) return (StepResult.Failed, $"The AI engine installer finished (code {r.ExitCode}) but {Path.Combine(Paths.OllamaDir, "ollama.exe")} wasn't found.");
+            note = Paths.PersonalOllamaExists ? "Installed a protected copy for Private AI (the personal copy already on this PC isn't used). " : "Installed. ";
         }
         else note = "Already installed. ";
+
+        // Ollama's own tray app would start a second engine at sign-in; Private AI keeps its own running instead.
+        try
+        {
+            var startup = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), "Ollama.lnk");
+            if (File.Exists(startup)) { File.Delete(startup); note += "Turned off Ollama's own start-at-sign-in. "; }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
 
         // Restart the engine so it uses the shared models folder.
         foreach (var name in new[] { "ollama app", "ollama" })
@@ -304,8 +326,10 @@ public sealed class Installer
 $a = New-ScheduledTaskAction -Execute {Proc.Ps(Paths.ServerExe)} -WorkingDirectory {Proc.Ps(Paths.InstallDir)}
 $t = New-ScheduledTaskTrigger -AtStartup
 $p = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-$s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero)
-Register-ScheduledTask -TaskName {Proc.Ps(Paths.TaskName)} -Description 'Night Tech Private AI: the private AI chat page for this network.' -Action $a -Trigger $t -Principal $p -Settings $s -Force | Out-Null
+# Also every 5 minutes: if Private AI ever stopped, it comes back (a copy already running is left alone).
+$t2 = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(5) -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)
+$s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -Priority 4
+Register-ScheduledTask -TaskName {Proc.Ps(Paths.TaskName)} -Description 'Night Tech Private AI: the private AI chat page for this network.' -Action $a -Trigger @($t, $t2) -Principal $p -Settings $s -Force | Out-Null
 Start-ScheduledTask -TaskName {Proc.Ps(Paths.TaskName)}";
         var r = Proc.PowerShell(script, TimeSpan.FromMinutes(2));
         return Task.FromResult(r.ExitCode == 0

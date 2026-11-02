@@ -60,7 +60,9 @@ public sealed class UserStore
     public bool Any { get { Refresh(); lock (_gate) return _users.Count > 0; } }
 
     public static string? CheckName(string name) =>
-        Regex.IsMatch(name ?? "", @"^[A-Za-z0-9][A-Za-z0-9._-]{1,31}$") ? null : "User names are 2 to 32 letters or numbers (dots, dashes and underscores are fine).";
+        Regex.IsMatch(name ?? "", @"^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,30}[A-Za-z0-9_-])?$") && (name ?? "").Length >= 2 && !(name ?? "").Contains("..")
+            ? null
+            : "User names are 2 to 32 letters or numbers. Dots, dashes and underscores are fine in the middle.";
 
     public static string? CheckPassword(string password) =>
         (password ?? "").Length >= MinPasswordLength ? null : $"Passwords need at least {MinPasswordLength} characters.";
@@ -77,7 +79,8 @@ public sealed class UserStore
         if (CheckPassword(password) is { } p) throw new ArgumentException(p);
         lock (_gate)
         {
-            if (Find(name) is not null) throw new ArgumentException("That user name is already taken.");
+            if (Find(name) is not null || _users.Any(x => ChatStore.SafeKey(x.Name) == ChatStore.SafeKey(name)))
+                throw new ArgumentException("That user name is already taken.");
             // The first person is always an administrator, so the AI can always be managed.
             var u = new UserAccount { Name = name, DisplayName = string.IsNullOrWhiteSpace(displayName) ? name : displayName.Trim(), IsAdmin = admin || _users.Count == 0, Created = now };
             SetHash(u, password);
@@ -105,6 +108,7 @@ public sealed class UserStore
             var u = Find(name) ?? throw new ArgumentException("No such user.");
             if (!admin && u.IsAdmin && _users.Count(x => x.IsAdmin) == 1) throw new ArgumentException("There must always be at least one administrator.");
             u.IsAdmin = admin;
+            u.Stamp = Convert.ToHexString(RandomNumberGenerator.GetBytes(8)); // their sign-ins end, so the change applies at once
             Save();
         }
     }
@@ -187,6 +191,35 @@ public sealed class SignInLimiter
 /// <summary>Private AI only answers computers on the same home or office network.</summary>
 public static class NetworkGuard
 {
+    /// <summary>
+    /// Local when the address is private (10.x, 172.16-31.x, 192.168.x, link-local, IPv6 unique-local) or inside one of
+    /// this computer's own network prefixes, which covers the public IPv6 addresses most internet providers hand out.
+    /// </summary>
+    public static bool IsLocal(IPAddress? ip, IEnumerable<(IPAddress Address, int PrefixLength)>? onLink)
+    {
+        if (IsLocal(ip)) return true;
+        if (ip is null || onLink is null) return false;
+        if (ip.IsIPv4MappedToIPv6) ip = ip.MapToIPv4();
+        foreach (var (net, len) in onLink)
+            if (InPrefix(ip, net, len)) return true;
+        return false;
+    }
+
+    public static bool InPrefix(IPAddress ip, IPAddress net, int prefixLength)
+    {
+        if (ip.AddressFamily != net.AddressFamily) return false;
+        var a = ip.GetAddressBytes();
+        var b = net.GetAddressBytes();
+        // A /0 or a very short prefix would mean "the whole internet": never accept those.
+        int min = ip.AddressFamily == AddressFamily.InterNetwork ? 16 : 48;
+        if (prefixLength < min || prefixLength > a.Length * 8) return false;
+        int full = prefixLength / 8, rest = prefixLength % 8;
+        for (int i = 0; i < full; i++) if (a[i] != b[i]) return false;
+        if (rest == 0) return true;
+        int mask = 0xFF << (8 - rest) & 0xFF;
+        return (a[full] & mask) == (b[full] & mask);
+    }
+
     public static bool IsLocal(IPAddress? ip)
     {
         if (ip is null) return false;

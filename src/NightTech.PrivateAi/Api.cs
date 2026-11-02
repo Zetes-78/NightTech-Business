@@ -82,11 +82,12 @@ public static class Api
             var now = DateTime.UtcNow;
             var wait = s.Limiter.Blocked("u:" + name.ToLowerInvariant(), now) ?? s.ComputerLimiter.Blocked(ipKey, now);
             if (wait is { } w) return Problem($"Too many wrong passwords. Try again in {Math.Max(1, (int)Math.Ceiling(w.TotalMinutes))} minute(s).", 429);
+            // Count the attempt before checking it, so many tries at once can't slip past the limit.
+            s.Limiter.Failed("u:" + name.ToLowerInvariant(), now);
+            s.ComputerLimiter.Failed(ipKey, now);
             var u = s.Users.Verify(name, r.Password ?? "");
             if (u is null)
             {
-                s.Limiter.Failed("u:" + name.ToLowerInvariant(), now);
-                s.ComputerLimiter.Failed(ipKey, now);
                 s.Log.Warn($"Failed sign-in for '{Clip(name, 40)}' from {Mapped(ctx.Connection.RemoteIpAddress)}.");
                 return Problem("That user name and password don't match.", 401);
             }
@@ -411,7 +412,7 @@ public static class Api
                     await file.CopyToAsync(ms, ctx.RequestAborted);
                     data = ms.ToArray();
                 }
-                var ex = TextExtractor.Extract(name, data);
+                var ex = await Task.Run(() => TextExtractor.Extract(name, data));
                 if (ex.Problem is not null) { results.Add(new { fileName = name, ok = false, message = ex.Problem }); continue; }
                 var chunks = Chunker.Split(ex.Parts);
                 if (chunks.Count > MaxPassagesPerDocument)

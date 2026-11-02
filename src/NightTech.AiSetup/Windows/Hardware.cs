@@ -153,8 +153,26 @@ public static class Proc
             try { p.Kill(true); } catch (InvalidOperationException) { }
             return new ProcResult(-1, output + "\n(timed out)");
         }
-        p.WaitForExit();
+        // Give the output a moment to finish arriving, without waiting forever on a pipe a child process still holds.
+        Thread.Sleep(200);
         lock (output) return new ProcResult(p.ExitCode, output.ToString());
+    }
+
+    /// <summary>
+    /// Runs a program without capturing its output (installers can leave child processes holding output pipes open,
+    /// which would make waiting for them hang), with a time limit.
+    /// </summary>
+    public static ProcResult RunPlain(string file, string args, TimeSpan timeout, IDictionary<string, string>? env = null)
+    {
+        var psi = new ProcessStartInfo(file, args) { UseShellExecute = false, CreateNoWindow = true };
+        if (env is not null) foreach (var (k, v) in env) psi.Environment[k] = v;
+        using var p = Process.Start(psi) ?? throw new InvalidOperationException("Couldn't start " + file);
+        if (!p.WaitForExit((int)timeout.TotalMilliseconds))
+        {
+            try { p.Kill(true); } catch (InvalidOperationException) { }
+            return new ProcResult(-1, "(timed out)");
+        }
+        return new ProcResult(p.ExitCode, "");
     }
 
     /// <summary>Runs a PowerShell script passed as an encoded command, so paths with quotes or spaces can't break it.</summary>

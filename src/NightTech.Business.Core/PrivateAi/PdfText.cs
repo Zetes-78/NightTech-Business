@@ -11,8 +11,11 @@ namespace NightTech.Business.Core.PrivateAi;
 /// </summary>
 internal static class PdfText
 {
-    private const int MaxStreamBytes = 64 * 1024 * 1024;
-    private const int MaxChars = 5_000_000;
+    private const int MaxStreamBytes = 24 * 1024 * 1024;
+    /// <summary>Most data all of one PDF's streams may expand to, so a small file can't fill the memory.</summary>
+    private const long MaxDecodedBytes = 96L * 1024 * 1024;
+    private const int MaxChars = TextExtractor.MaxChars;
+    private static readonly TimeSpan RegexLimit = TimeSpan.FromSeconds(5);
 
     // ---------------- Values ----------------
 
@@ -23,7 +26,7 @@ internal static class PdfText
     private sealed class Obj
     {
         public object? Value;
-        public byte[]? RawStream;
+        public int RawStart = -1, RawLength;   // the stream's bytes, in the original file (never copied)
         public byte[]? Decoded;
         public bool DecodeTried;
     }
@@ -31,6 +34,8 @@ internal static class PdfText
     private sealed class Doc
     {
         public readonly Dictionary<int, Obj> Objects = new();
+        public required byte[] Data;
+        public long DecodedBytes;
         public object? Resolve(object? v, int depth = 0)
         {
             while (v is Ref r && depth++ < 32) v = Objects.TryGetValue(r.Number, out var o) ? o.Value : null;
@@ -48,7 +53,7 @@ internal static class PdfText
     public static void Extract(byte[] data, ExtractResult result)
     {
         var doc = Load(data);
-        if (doc.Objects.Values.Any(o => o.Value is Dict d && d.ContainsKey("Encrypt")) || Regex.IsMatch(Latin1(data, Math.Max(0, data.Length - 4096), Math.Min(4096, data.Length)), @"/Encrypt\s"))
+        if (doc.Objects.Values.Any(o => o.Value is Dict d && d.ContainsKey("Encrypt")) || Regex.IsMatch(Latin1(data, Math.Max(0, data.Length - 4096), Math.Min(4096, data.Length)), @"/Encrypt\s", RegexOptions.None, RegexLimit))
         {
             result.Problem = "This PDF is password-protected or encrypted. Save an unprotected copy and add that instead.";
             return;
@@ -91,15 +96,15 @@ internal static class PdfText
 
     // ---------------- Objects ----------------
 
-    private static readonly Regex ObjStart = new(@"(\d+)\s+(\d+)\s+obj\b", RegexOptions.Compiled);
+    private static readonly Regex ObjStart = new(@"(\d{1,9})\s+(\d{1,5})\s+obj\b", RegexOptions.Compiled, TimeSpan.FromSeconds(30));
 
     private static Doc Load(byte[] data)
     {
-        var doc = new Doc();
+        var doc = new Doc { Data = data };
         var text = Encoding.Latin1.GetString(data);
         foreach (Match m in ObjStart.Matches(text))
         {
-            int num = int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture);
+            if (!int.TryParse(m.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var num)) continue;
             int pos = m.Index + m.Length;
             try
             {
@@ -122,11 +127,12 @@ internal static class PdfText
                         if (len > 0 && data[s + len - 1] == '\n') len--;
                         if (len > 0 && data[s + len - 1] == '\r') len--;
                     }
-                    o.RawStream = data.AsSpan(s, len).ToArray();
+                    o.RawStart = s;
+                    o.RawLength = len;
                 }
                 doc.Objects[num] = o; // later objects replace earlier ones (incremental updates)
             }
-            catch (Exception ex) when (ex is FormatException or IndexOutOfRangeException or ArgumentException) { /* skip a damaged object */ }
+            catch (Exception ex) when (ex is FormatException or IndexOutOfRangeException or ArgumentException or OverflowException) { /* skip a damaged object */ }
         }
 
         // Objects packed inside compressed object streams.
@@ -146,12 +152,12 @@ internal static class PdfText
                 }
                 foreach (var (num, off) in heads)
                 {
-                    int at = (int)first + off;
+                    long at = (long)first + off;
                     if (at < 0 || at >= bytes.Length || doc.Objects.ContainsKey(num)) continue;
-                    doc.Objects[num] = new Obj { Value = new Parser(bytes, at).Value() };
+                    doc.Objects[num] = new Obj { Value = new Parser(bytes, (int)at).Value() };
                 }
             }
-            catch (Exception ex) when (ex is FormatException or IndexOutOfRangeException or ArgumentException) { }
+            catch (Exception ex) when (ex is FormatException or IndexOutOfRangeException or ArgumentException or OverflowException) { }
         }
         return doc;
     }
@@ -167,7 +173,7 @@ internal static class PdfText
 
     private static byte[]? Decode(Doc doc, Obj o)
     {
-        if (o.RawStream is null || o.Value is not Dict d) return null;
+        if (o.RawStart < 0 || o.Value is not Dict d) return null;
         var filter = doc.Resolve(d.GetValueOrDefault("Filter"));
         var filters = filter switch
         {
@@ -176,15 +182,19 @@ internal static class PdfText
             List<object> l => l.Select(x => (doc.Resolve(x) as Name)?.Value ?? "").ToList(),
             _ => new List<string> { "?" },
         };
-        var bytes = o.RawStream;
+        byte[]? bytes = null;
         foreach (var f in filters)
         {
-            if (f is "FlateDecode" or "Fl") bytes = Inflate(bytes);
-            else if (f is "ASCII85Decode" or "A85") bytes = Ascii85(bytes);
-            else if (f is "ASCIIHexDecode" or "AHx") bytes = AsciiHex(bytes);
+            var input = bytes is null ? new ArraySegment<byte>(doc.Data, o.RawStart, o.RawLength) : new ArraySegment<byte>(bytes);
+            if (f is "FlateDecode" or "Fl") bytes = Inflate(input, doc);
+            else if (f is "ASCII85Decode" or "A85") bytes = Ascii85(input.ToArray());
+            else if (f is "ASCIIHexDecode" or "AHx") bytes = AsciiHex(input.ToArray());
             else return null; // images and other encodings hold no text
             if (bytes is null) return null;
         }
+        bytes ??= new ArraySegment<byte>(doc.Data, o.RawStart, o.RawLength).ToArray();
+        doc.DecodedBytes += bytes.Length;
+        if (doc.DecodedBytes > MaxDecodedBytes) throw new TextExtractor.TooBigException();
         return bytes;
     }
 
@@ -230,13 +240,15 @@ internal static class PdfText
         return Convert.FromHexString(digits.ToString());
     }
 
-    private static byte[]? Inflate(byte[] input)
+    private static byte[]? Inflate(ArraySegment<byte> input, Doc? doc)
     {
+        long room = doc is null ? MaxStreamBytes : Math.Min(MaxStreamBytes, MaxDecodedBytes - doc.DecodedBytes);
         foreach (var skip in new[] { 0, 2 })
         {
+            if (input.Count <= skip) return null;
             try
             {
-                using var src = new MemoryStream(input, skip, input.Length - skip);
+                using var src = new MemoryStream(input.Array!, input.Offset + skip, input.Count - skip);
                 using Stream z = skip == 0 ? new ZLibStream(src, CompressionMode.Decompress) : new DeflateStream(src, CompressionMode.Decompress);
                 using var dst = new MemoryStream();
                 var buf = new byte[81920];
@@ -244,7 +256,7 @@ internal static class PdfText
                 while ((n = z.Read(buf, 0, buf.Length)) > 0)
                 {
                     dst.Write(buf, 0, n);
-                    if (dst.Length > MaxStreamBytes) return null;
+                    if (dst.Length > room) throw new TextExtractor.TooBigException();
                 }
                 return dst.ToArray();
             }
@@ -299,8 +311,10 @@ internal static class PdfText
         var list = doc.Resolve(c) is List<object> l ? l : new List<object?> { c }!;
         // Several content streams on one page are one stream split in pieces: join them.
         var joined = new MemoryStream();
+        var seen = new HashSet<int>();
         foreach (var part in list)
         {
+            if (part is Ref pr && !seen.Add(pr.Number)) continue; // the same stream listed again adds nothing
             var s = doc.Stream(part);
             if (s is null) continue;
             joined.Write(s);
@@ -413,20 +427,20 @@ internal static class PdfText
         var map = new Dictionary<int, string>();
         codeBytes = 1;
         var s = Encoding.Latin1.GetString(data);
-        var cs = Regex.Match(s, @"begincodespacerange\s*<([0-9A-Fa-f]+)>");
+        var cs = Regex.Match(s, @"begincodespacerange\s*<([0-9A-Fa-f]+)>", RegexOptions.None, RegexLimit);
         if (cs.Success) codeBytes = Math.Max(1, cs.Groups[1].Value.Length / 2);
-        foreach (Match block in Regex.Matches(s, @"beginbfchar([\s\S]*?)endbfchar"))
-            foreach (Match m in Regex.Matches(block.Groups[1].Value, @"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]*)>"))
+        foreach (Match block in Regex.Matches(s, @"beginbfchar([\s\S]*?)endbfchar", RegexOptions.None, RegexLimit))
+            foreach (Match m in Regex.Matches(block.Groups[1].Value, @"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]*)>", RegexOptions.None, RegexLimit))
                 map[Hex(m.Groups[1].Value)] = Utf16(m.Groups[2].Value);
-        foreach (Match block in Regex.Matches(s, @"beginbfrange([\s\S]*?)endbfrange"))
-            foreach (Match m in Regex.Matches(block.Groups[1].Value, @"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*(<[0-9A-Fa-f]*>|\[[^\]]*\])"))
+        foreach (Match block in Regex.Matches(s, @"beginbfrange([\s\S]*?)endbfrange", RegexOptions.None, RegexLimit))
+            foreach (Match m in Regex.Matches(block.Groups[1].Value, @"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*(<[0-9A-Fa-f]*>|\[[^\]]*\])", RegexOptions.None, RegexLimit))
             {
                 int lo = Hex(m.Groups[1].Value), hi = Hex(m.Groups[2].Value);
                 if (hi < lo || hi - lo > 65535) continue;
                 var dst = m.Groups[3].Value;
                 if (dst.StartsWith('['))
                 {
-                    var items = Regex.Matches(dst, @"<([0-9A-Fa-f]*)>").Select(x => x.Groups[1].Value).ToList();
+                    var items = Regex.Matches(dst, @"<([0-9A-Fa-f]*)>", RegexOptions.None, RegexLimit).Select(x => x.Groups[1].Value).ToList();
                     for (int i = 0; i < items.Count && lo + i <= hi; i++) map[lo + i] = Utf16(items[i]);
                 }
                 else
@@ -577,6 +591,8 @@ internal static class PdfText
     internal sealed class Parser
     {
         private readonly byte[] _b;
+        private int _depth;
+        private const int MaxDepth = 100;
         public int Pos;
         public Parser(byte[] b, int pos) { _b = b; Pos = pos; }
 
@@ -635,32 +651,43 @@ internal static class PdfText
             if (c == '<' && Pos + 1 < _b.Length && _b[Pos + 1] == '<')
             {
                 Pos += 2;
-                var d = new Dict();
-                while (true)
+                if (++_depth > MaxDepth) throw new FormatException("Nested too deeply.");
+                try
                 {
-                    SkipSpace();
-                    if (Pos >= _b.Length) throw new FormatException("Unclosed dictionary.");
-                    if (_b[Pos] == '>' && Pos + 1 < _b.Length && _b[Pos + 1] == '>') { Pos += 2; return d; }
-                    var k = Token();
-                    if (k is not Name key) { if (k is null) throw new FormatException(); continue; }
-                    d[key.Value] = Value()!;
+                    var d = new Dict();
+                    while (true)
+                    {
+                        SkipSpace();
+                        if (Pos >= _b.Length) throw new FormatException("Unclosed dictionary.");
+                        if (_b[Pos] == '>' && Pos + 1 < _b.Length && _b[Pos + 1] == '>') { Pos += 2; return d; }
+                        var k = Token();
+                        if (k is not Name key) { if (k is null) throw new FormatException(); continue; }
+                        d[key.Value] = Value()!;
+                    }
                 }
+                finally { _depth--; }
             }
             if (c == '<') return HexString();
             if (c == '(') return LiteralString();
             if (c == '[')
             {
                 Pos++;
-                var list = new List<object>();
-                while (true)
+                if (++_depth > MaxDepth) throw new FormatException("Nested too deeply.");
+                try
                 {
-                    SkipSpace();
-                    if (Pos >= _b.Length) throw new FormatException("Unclosed array.");
-                    if (_b[Pos] == ']') { Pos++; return list; }
-                    var v = Value();
-                    if (v is Op o && o.Name == "R") continue;
-                    if (v is not null) list.Add(v);
+                    var list = new List<object>();
+                    while (true)
+                    {
+                        SkipSpace();
+                        if (Pos >= _b.Length) throw new FormatException("Unclosed array.");
+                        if (_b[Pos] == ']') { Pos++; return list; }
+                        var v = Value();
+                        if (v is Op o && o.Name == "R") continue;
+                        if (v is not null) list.Add(v);
+                        if (list.Count > 1_000_000) throw new FormatException("Array too large.");
+                    }
                 }
+                finally { _depth--; }
             }
             if (c == ']' || c == '>' || c == ')' || c == '{' || c == '}') { Pos++; return new Op(((char)c).ToString()); }
             if (c is >= (byte)'0' and <= (byte)'9' || c is (byte)'-' or (byte)'+' or (byte)'.')

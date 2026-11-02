@@ -225,6 +225,10 @@ public class PrivateAiTests
             Assert.Throws<ArgumentException>(() => users.Add("carin", "", "short", false, Now));
             Assert.Throws<ArgumentException>(() => users.Add("../x", "", "long enough", false, Now));
             Assert.Throws<ArgumentException>(() => users.Remove("jason")); // last admin
+            users.Add("bob", "Bob", "long enough 1", true, Now);
+            var bobStamp = users.Find("bob")!.Stamp;
+            users.SetAdmin("bob", false);
+            Assert.NotEqual(bobStamp, users.Find("bob")!.Stamp); // demoting ends their sign-ins
             var stamp = users.Find("jason")!.Stamp;
             users.SetPassword("jason", "new password!");
             Assert.NotEqual(stamp, new UserStore(path).Find("jason")!.Stamp);
@@ -264,6 +268,28 @@ public class PrivateAiTests
     [InlineData("::ffff:1.2.3.4", false)]
     public void Only_the_local_network_is_allowed(string ip, bool local) =>
         Assert.Equal(local, NetworkGuard.IsLocal(IPAddress.Parse(ip)));
+
+    [Fact]
+    public void The_computers_own_network_counts_as_local_including_public_ipv6()
+    {
+        var onLink = new[] { (IPAddress.Parse("2601:5c4:4300:1a::"), 64), (IPAddress.Parse("0.0.0.0"), 0) };
+        Assert.True(NetworkGuard.IsLocal(IPAddress.Parse("2601:5c4:4300:1a:9d2::7"), onLink));
+        Assert.False(NetworkGuard.IsLocal(IPAddress.Parse("2601:5c4:4300:1b::7"), onLink));
+        Assert.False(NetworkGuard.IsLocal(IPAddress.Parse("8.8.8.8"), onLink)); // a /0 never counts
+        Assert.True(NetworkGuard.InPrefix(IPAddress.Parse("100.64.3.9"), IPAddress.Parse("100.64.0.0"), 20));
+        Assert.False(NetworkGuard.InPrefix(IPAddress.Parse("100.64.16.9"), IPAddress.Parse("100.64.0.0"), 20));
+    }
+
+    [Theory]
+    [InlineData("bob", true)]
+    [InlineData("bob.smith", true)]
+    [InlineData("bob.", false)]
+    [InlineData(".bob", false)]
+    [InlineData("b..b", false)]
+    [InlineData("b", false)]
+    [InlineData("jason_s", true)]
+    public void User_names_that_could_share_a_folder_are_refused(string name, bool ok) =>
+        Assert.Equal(ok, UserStore.CheckName(name) is null);
 
     // ---------------- Prompts and chats ----------------
 

@@ -22,6 +22,8 @@ var users = new UserStore(Path.Combine(dataDir, "users.json"));
 if (args.Length > 0 && !args[0].StartsWith("--", StringComparison.Ordinal))
     return await Cli.Run(args, users, settings, dataDir);
 
+// A pattern can never run for long on hostile text (document readers use their own, shorter limits).
+AppDomain.CurrentDomain.SetData("REGEX_DEFAULT_MATCH_TIMEOUT", TimeSpan.FromSeconds(10));
 var log = new ServerLog(Path.Combine(dataDir, "logs"));
 var state = new AppState(settings, settingsPath, users, new Library(Path.Combine(dataDir, "library")), new ChatStore(Path.Combine(dataDir, "chats")), log, dataDir);
 
@@ -57,7 +59,8 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
     o.Events.OnValidatePrincipal = c =>
     {
         var u = users.Find(c.Principal?.Identity?.Name ?? "");
-        if (u is null || u.Stamp != c.Principal!.FindFirstValue("stamp")) c.RejectPrincipal();
+        if (u is null || u.Stamp != c.Principal!.FindFirstValue("stamp") || (u.IsAdmin ? "true" : "false") != c.Principal!.FindFirstValue("admin"))
+            c.RejectPrincipal();
         return Task.CompletedTask;
     };
 });
@@ -68,10 +71,17 @@ var app = builder.Build();
 app.Use(async (ctx, next) =>
 {
     // Only computers on this home or office network.
-    if (!NetworkGuard.IsLocal(ctx.Connection.RemoteIpAddress))
+    if (!NetworkGuard.IsLocal(ctx.Connection.RemoteIpAddress, OnLink.Prefixes))
     {
         ctx.Response.StatusCode = 403;
         await ctx.Response.WriteAsync("Private AI is only available on this network.");
+        return;
+    }
+    // Only this computer's own names and addresses: stops a web page from reaching Private AI through a look-alike name (DNS rebinding).
+    if (!OnLink.AllowedHost(ctx.Request.Host.Host))
+    {
+        ctx.Response.StatusCode = 400;
+        await ctx.Response.WriteAsync("Open Private AI by this computer's name or address.");
         return;
     }
     var h = ctx.Response.Headers;

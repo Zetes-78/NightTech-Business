@@ -18,10 +18,12 @@ AppVerName={#AppName} {#AppVersion}
 AppPublisher={#AppPublisher}
 AppPublisherURL={#AppURL}
 AppSupportURL={#AppURL}
-DefaultDirName={localappdata}\Programs\Night Tech AI Setup
+DefaultDirName={autopf}\Night Tech\AI Setup
 DefaultGroupName=Night Tech AI Setup
 DisableProgramGroupPage=yes
-PrivilegesRequired=lowest
+; Installed for the whole computer, where only administrators can change it: this tool runs as administrator
+; and copies Private AI from its own folder into Program Files.
+PrivilegesRequired=admin
 OutputDir=Output
 OutputBaseFilename=NightTechAiSetup-Setup
 SetupIconFile=NightTechAiSetup.ico
@@ -46,7 +48,7 @@ Source: "..\packaging\USB-README.txt"; DestDir: "{app}"; DestName: "README.txt";
 [Icons]
 Name: "{group}\Night Tech AI Setup"; Filename: "{app}\{#AppExe}"
 Name: "{group}\Uninstall Night Tech AI Setup"; Filename: "{uninstallexe}"
-Name: "{userdesktop}\Night Tech AI Setup"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
+Name: "{autodesktop}\Night Tech AI Setup"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "Start Night Tech AI Setup now"; Flags: shellexec nowait postinstall skipifsilent

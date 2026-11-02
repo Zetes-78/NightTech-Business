@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Net;
+using System.Net.NetworkInformation;
 using System.Reflection;
 using System.Text;
 using NightTech.Business.Core.PrivateAi;
@@ -37,6 +39,48 @@ public sealed class AppState
     public void SaveSettings() { lock (_settingsGate) Settings.Save(SettingsPath); }
 }
 
+/// <summary>This computer's own network prefixes and names, refreshed every minute.</summary>
+public static class OnLink
+{
+    private static (IPAddress, int)[] _prefixes = Array.Empty<(IPAddress, int)>();
+    private static DateTime _read = DateTime.MinValue;
+    private static readonly object Gate = new();
+
+    public static IReadOnlyList<(IPAddress Address, int PrefixLength)> Prefixes
+    {
+        get
+        {
+            lock (Gate)
+            {
+                if (DateTime.UtcNow - _read > TimeSpan.FromMinutes(1))
+                {
+                    try
+                    {
+                        _prefixes = NetworkInterface.GetAllNetworkInterfaces()
+                            .Where(n => n.OperationalStatus == OperationalStatus.Up && n.NetworkInterfaceType != NetworkInterfaceType.Loopback)
+                            .SelectMany(n => n.GetIPProperties().UnicastAddresses)
+                            .Select(a => (a.Address, a.PrefixLength))
+                            .ToArray();
+                    }
+                    catch (NetworkInformationException) { }
+                    _read = DateTime.UtcNow;
+                }
+                return _prefixes;
+            }
+        }
+    }
+
+    public static bool AllowedHost(string host)
+    {
+        if (string.IsNullOrEmpty(host)) return false;
+        if (IPAddress.TryParse(host.Trim('[', ']'), out _)) return true;
+        if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase)) return true;
+        var me = Environment.MachineName;
+        return host.Equals(me, StringComparison.OrdinalIgnoreCase)
+            || host.StartsWith(me + ".", StringComparison.OrdinalIgnoreCase); // office-pc.local, office-pc.lan, office-pc.home
+    }
+}
+
 /// <summary>A small daily log file in the data folder's logs folder. No chat text is ever written to it.</summary>
 public sealed class ServerLog
 {
@@ -73,7 +117,22 @@ public sealed class OllamaKeeper : BackgroundService
 {
     private readonly AppState _s;
     private Process? _child;
+    private bool _warned;
     public OllamaKeeper(AppState s) => _s = s;
+
+    /// <summary>The engine must live under Program Files, where only administrators can change it.</summary>
+    public static bool SafeEngine(string exe)
+    {
+        try
+        {
+            var full = Path.GetFullPath(exe);
+            return new[] { Environment.SpecialFolder.ProgramFiles, Environment.SpecialFolder.ProgramFilesX86 }
+                .Select(Environment.GetFolderPath)
+                .Where(p => p.Length > 0)
+                .Any(p => full.StartsWith(Path.TrimEndingDirectorySeparator(p) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return false; }
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stop)
     {
@@ -83,7 +142,12 @@ public sealed class OllamaKeeper : BackgroundService
             if (await _s.Ollama.VersionAsync(stop) is null)
             {
                 var exe = _s.Settings.OllamaExe;
-                if (exe.Length > 0 && File.Exists(exe) && (_child is null || _child.HasExited))
+                if (exe.Length > 0 && !SafeEngine(exe))
+                {
+                    if (!_warned) _s.Log.Error($"Not starting the AI engine from {exe}: only a copy under Program Files is started, because this runs as Windows itself.");
+                    _warned = true;
+                }
+                else if (exe.Length > 0 && File.Exists(exe) && (_child is null || _child.HasExited))
                 {
                     try
                     {

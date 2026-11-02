@@ -3,6 +3,7 @@ using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml;
+using System.Linq;
 
 namespace NightTech.Business.Core.PrivateAi;
 
@@ -24,7 +25,26 @@ public static class TextExtractor
     public static bool IsSupported(string fileName) =>
         Supported.Contains(Path.GetExtension(fileName).ToLowerInvariant());
 
-    public static ExtractResult Extract(string fileName, byte[] data)
+    /// <summary>Most text a document may contribute (about 2,500 pages).</summary>
+    public const int MaxChars = 5_000_000;
+    /// <summary>Most XML an Office file may expand to, across all its parts (stops "zip bomb" files).</summary>
+    public const long MaxOfficeXmlChars = 150_000_000;
+
+    /// <summary>
+    /// Reads a document on its own thread with a large stack and a time limit, so a damaged or hostile file can't
+    /// crash or freeze the program that called it.
+    /// </summary>
+    public static ExtractResult Extract(string fileName, byte[] data, TimeSpan? timeLimit = null)
+    {
+        ExtractResult? result = null;
+        var t = new Thread(() => result = ExtractNow(fileName, data), 256 * 1024 * 1024) { IsBackground = true, Name = "Document reader" };
+        t.Start();
+        if (!t.Join(timeLimit ?? TimeSpan.FromMinutes(3)))
+            return new ExtractResult { Problem = "This document took too long to read. Save it in another format (for example Word or PDF) and try again." };
+        return result ?? new ExtractResult { Problem = "This document couldn't be read." };
+    }
+
+    private static ExtractResult ExtractNow(string fileName, byte[] data)
     {
         var r = new ExtractResult();
         try
@@ -42,8 +62,14 @@ public static class TextExtractor
                 default: r.Problem = "This kind of file isn't supported. Use PDF, Word, Excel, PowerPoint, text or web pages."; break;
             }
         }
-        catch (Exception ex) when (ex is InvalidDataException or XmlException or IOException or FormatException)
+        catch (TooBigException)
         {
+            r.Parts.Clear();
+            r.Problem = "This document is too large or expands to too much data to add. Split it into smaller files.";
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            r.Parts.Clear();
             r.Problem = "The file looks damaged or isn't really a " + Path.GetExtension(fileName) + " file.";
         }
         for (int i = 0; i < r.Parts.Count; i++) r.Parts[i] = r.Parts[i] with { Text = Tidy(r.Parts[i].Text) };
@@ -71,120 +97,226 @@ public static class TextExtractor
         return s.Trim();
     }
 
+    private static readonly HashSet<string> SkipContent = new(StringComparer.OrdinalIgnoreCase) { "script", "style", "noscript", "svg", "head", "template" };
+    private static readonly HashSet<string> LineBreak = new(StringComparer.OrdinalIgnoreCase)
+        { "br", "p", "div", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "section", "article", "table", "ul", "ol", "header", "footer", "blockquote", "pre" };
+
+    /// <summary>Text of a web page. One forward pass, so any input takes time in proportion to its size.</summary>
     public static string Html(string html)
     {
-        html = Regex.Replace(html, @"<(script|style|noscript|svg|head)\b[\s\S]*?</\1\s*>", " ", RegexOptions.IgnoreCase);
-        html = Regex.Replace(html, @"<!--[\s\S]*?-->", " ");
-        html = Regex.Replace(html, @"<(br|/p|/div|/li|/tr|/h[1-6]|/section|/article|/table)\b[^>]*>", "\n", RegexOptions.IgnoreCase);
-        html = Regex.Replace(html, @"<(td|th)\b[^>]*>", " | ", RegexOptions.IgnoreCase);
-        html = Regex.Replace(html, @"<[^>]+>", " ");
-        return WebUtility.HtmlDecode(html);
+        var sb = new StringBuilder(Math.Min(html.Length, MaxChars));
+        int i = 0, n = html.Length;
+        while (i < n && sb.Length < MaxChars)
+        {
+            int lt = html.IndexOf('<', i);
+            if (lt < 0) { sb.Append(html, i, n - i); break; }
+            sb.Append(html, i, lt - i);
+            if (string.CompareOrdinal(html, lt, "<!--", 0, 4) == 0)
+            {
+                int end = html.IndexOf("-->", lt + 4, StringComparison.Ordinal);
+                i = end < 0 ? n : end + 3;
+                continue;
+            }
+            int gt = html.IndexOf('>', lt + 1);
+            if (gt < 0) { i = n; break; }
+            // Tag name
+            int k = lt + 1;
+            bool closing = k < gt && html[k] == '/';
+            if (closing) k++;
+            int nameStart = k;
+            while (k < gt && (char.IsLetterOrDigit(html[k]) || html[k] == '-')) k++;
+            var name = html[nameStart..k];
+            i = gt + 1;
+            if (!closing && SkipContent.Contains(name))
+            {
+                int end = html.IndexOf("</" + name, i, StringComparison.OrdinalIgnoreCase);
+                if (end < 0) { i = n; break; }
+                int endGt = html.IndexOf('>', end);
+                i = endGt < 0 ? n : endGt + 1;
+                continue;
+            }
+            if (name.Equals("td", StringComparison.OrdinalIgnoreCase) || name.Equals("th", StringComparison.OrdinalIgnoreCase)) { if (!closing) sb.Append(" | "); }
+            else if (LineBreak.Contains(name)) { if (sb.Length > 0 && sb[^1] != '\n') sb.Append('\n'); }
+            else sb.Append(' ');
+        }
+        return WebUtility.HtmlDecode(sb.ToString());
     }
 
     // ---------------- Office files (zip of XML) ----------------
+    // Read with a forward-only XmlReader (no document tree, no recursion), with limits on how much XML may be read.
 
-    private static XmlDocument? Xml(ZipArchive z, string path)
+    internal sealed class TooBigException : Exception { }
+
+    private sealed class Budget
+    {
+        public long XmlChars;
+        public int Text;
+    }
+
+    private static XmlReader? Reader(ZipArchive z, string path, Budget b)
     {
         var e = z.GetEntry(path);
         if (e is null) return null;
-        if (e.Length > 200L * 1024 * 1024) throw new InvalidDataException("Part too large.");
-        var doc = new XmlDocument { XmlResolver = null };
-        using var s = e.Open();
-        using var reader = XmlReader.Create(s, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null });
-        doc.Load(reader);
-        return doc;
+        if (e.Length > MaxOfficeXmlChars) throw new TooBigException();
+        b.XmlChars += e.Length;
+        if (b.XmlChars > MaxOfficeXmlChars) throw new TooBigException();
+        return XmlReader.Create(e.Open(), new XmlReaderSettings
+        {
+            DtdProcessing = DtdProcessing.Prohibit,
+            XmlResolver = null,
+            MaxCharactersInDocument = MaxOfficeXmlChars,
+            IgnoreComments = true,
+            IgnoreProcessingInstructions = true,
+            CloseInput = true,
+        });
+    }
+
+    private static void Add(StringBuilder sb, string s, Budget b)
+    {
+        sb.Append(s);
+        b.Text += s.Length;
+        if (b.Text > MaxChars) throw new TooBigException();
+    }
+
+    /// <summary>Paragraph text: elements named <paramref name="text"/> inside <paramref name="para"/>, a line per paragraph.</summary>
+    private static string Paragraphs(XmlReader x, string para, string text, Budget b, bool wordExtras)
+    {
+        var sb = new StringBuilder();
+        using (x)
+        {
+            // ReadElementContentAsString already moves to the next node, so only call Read() when it didn't.
+            bool more = x.Read();
+            while (more)
+            {
+                if (x.NodeType == XmlNodeType.Element && x.LocalName == text && !x.IsEmptyElement)
+                {
+                    Add(sb, x.ReadElementContentAsString(), b);
+                    more = !x.EOF;
+                    continue;
+                }
+                if (x.NodeType == XmlNodeType.Element && wordExtras)
+                {
+                    if (x.LocalName == "tab") Add(sb, "\t", b);
+                    else if (x.LocalName is "br" or "cr") Add(sb, "\n", b);
+                }
+                else if (x.NodeType == XmlNodeType.EndElement && x.LocalName == para) Add(sb, "\n", b);
+                more = x.Read();
+            }
+        }
+        return sb.ToString();
     }
 
     private static void Docx(byte[] data, ExtractResult r)
     {
         using var z = new ZipArchive(new MemoryStream(data), ZipArchiveMode.Read);
-        var doc = Xml(z, "word/document.xml") ?? throw new InvalidDataException("No document body.");
-        var sb = new StringBuilder();
-        foreach (XmlNode p in doc.GetElementsByTagName("w:p"))
-        {
-            foreach (XmlNode n in p.SelectNodes(".//*")!)
-            {
-                if (n.Name == "w:t") sb.Append(n.InnerText);
-                else if (n.Name == "w:tab") sb.Append('\t');
-                else if (n.Name is "w:br" or "w:cr") sb.Append('\n');
-            }
-            sb.Append('\n');
-        }
-        r.Parts.Add(new TextPart(0, sb.ToString()));
-    }
-
-    private static void Xlsx(byte[] data, ExtractResult r)
-    {
-        using var z = new ZipArchive(new MemoryStream(data), ZipArchiveMode.Read);
-        var shared = new List<string>();
-        var ss = Xml(z, "xl/sharedStrings.xml");
-        if (ss is not null)
-            foreach (XmlNode si in ss.GetElementsByTagName("si"))
-                shared.Add(string.Concat(si.SelectNodes(".//*[local-name()='t']")!.Cast<XmlNode>().Select(t => t.InnerText)));
-
-        // Sheet names, in workbook order.
-        var names = new List<(string Name, string Path)>();
-        var wb = Xml(z, "xl/workbook.xml");
-        var rels = Xml(z, "xl/_rels/workbook.xml.rels");
-        if (wb is not null && rels is not null)
-        {
-            var targets = rels.GetElementsByTagName("Relationship").Cast<XmlElement>()
-                .ToDictionary(e => e.GetAttribute("Id"), e => e.GetAttribute("Target"));
-            foreach (XmlElement s in wb.GetElementsByTagName("sheet"))
-            {
-                var id = s.GetAttribute("id", "http://schemas.openxmlformats.org/officeDocument/2006/relationships");
-                if (targets.TryGetValue(id, out var t))
-                    names.Add((s.GetAttribute("name"), t.StartsWith('/') ? t.TrimStart('/') : "xl/" + t));
-            }
-        }
-        if (names.Count == 0)
-            names = z.Entries.Where(e => e.FullName.StartsWith("xl/worksheets/sheet", StringComparison.Ordinal))
-                .Select(e => (Path.GetFileNameWithoutExtension(e.Name), e.FullName)).ToList();
-
-        int page = 0;
-        foreach (var (name, path) in names)
-        {
-            var sheet = Xml(z, path);
-            if (sheet is null) continue;
-            var sb = new StringBuilder($"Sheet: {name}\n");
-            int rows = 0;
-            foreach (XmlNode row in sheet.GetElementsByTagName("row"))
-            {
-                var cells = new List<string>();
-                foreach (XmlElement c in row.ChildNodes.OfType<XmlElement>().Where(e => e.LocalName == "c"))
-                {
-                    var type = c.GetAttribute("t");
-                    var v = c.ChildNodes.OfType<XmlElement>().FirstOrDefault(e => e.LocalName == "v")?.InnerText ?? "";
-                    if (type == "s" && int.TryParse(v, out var i) && i >= 0 && i < shared.Count) v = shared[i];
-                    else if (type == "inlineStr") v = c.InnerText;
-                    cells.Add(v);
-                }
-                if (cells.Any(x => x.Length > 0)) { sb.Append(string.Join(" | ", cells)).Append('\n'); rows++; }
-                if (rows >= 20000) { sb.Append("(more rows not included)\n"); break; }
-            }
-            r.Parts.Add(new TextPart(++page, sb.ToString()));
-        }
+        var b = new Budget();
+        var x = Reader(z, "word/document.xml", b) ?? throw new InvalidDataException("No document body.");
+        r.Parts.Add(new TextPart(0, Paragraphs(x, "p", "t", b, wordExtras: true)));
     }
 
     private static void Pptx(byte[] data, ExtractResult r)
     {
         using var z = new ZipArchive(new MemoryStream(data), ZipArchiveMode.Read);
+        var b = new Budget();
         var slides = z.Entries
-            .Select(e => Regex.Match(e.FullName, @"^ppt/slides/slide(\d+)\.xml$"))
+            .Select(e => Regex.Match(e.FullName, @"^ppt/slides/slide(\d{1,5})\.xml$"))
             .Where(m => m.Success)
             .Select(m => (Number: int.Parse(m.Groups[1].Value), Path: m.Value))
             .OrderBy(s => s.Number);
         foreach (var (number, path) in slides)
         {
-            var doc = Xml(z, path);
-            if (doc is null) continue;
-            var sb = new StringBuilder();
-            foreach (XmlNode p in doc.GetElementsByTagName("a:p"))
+            var x = Reader(z, path, b);
+            if (x is not null) r.Parts.Add(new TextPart(number, Paragraphs(x, "p", "t", b, wordExtras: false)));
+        }
+    }
+
+    private static void Xlsx(byte[] data, ExtractResult r)
+    {
+        using var z = new ZipArchive(new MemoryStream(data), ZipArchiveMode.Read);
+        var b = new Budget();
+
+        // Shared strings: one per <si>, joining its <t> pieces.
+        var shared = new List<string>();
+        var ss = Reader(z, "xl/sharedStrings.xml", b);
+        if (ss is not null)
+            using (ss)
             {
-                foreach (XmlNode t in p.SelectNodes(".//*[local-name()='t']")!) sb.Append(t.InnerText);
-                sb.Append('\n');
+                StringBuilder? cur = null;
+                bool more = ss.Read();
+                while (more)
+                {
+                    if (ss.NodeType == XmlNodeType.Element && ss.LocalName == "t" && cur is not null && !ss.IsEmptyElement)
+                    {
+                        cur.Append(ss.ReadElementContentAsString());
+                        more = !ss.EOF;
+                        continue;
+                    }
+                    if (ss.NodeType == XmlNodeType.Element && ss.LocalName == "si")
+                    {
+                        if (ss.IsEmptyElement) shared.Add("");
+                        else cur = new StringBuilder();
+                    }
+                    else if (ss.NodeType == XmlNodeType.EndElement && ss.LocalName == "si" && cur is not null)
+                    {
+                        shared.Add(cur.ToString());
+                        b.Text += cur.Length;
+                        if (b.Text > MaxChars) throw new TooBigException();
+                        cur = null;
+                    }
+                    more = ss.Read();
+                }
             }
-            r.Parts.Add(new TextPart(number, sb.ToString()));
+
+        // Sheet names and files, in workbook order.
+        var targets = new Dictionary<string, string>();
+        var rels = Reader(z, "xl/_rels/workbook.xml.rels", b);
+        if (rels is not null)
+            using (rels)
+                while (rels.Read())
+                    if (rels.NodeType == XmlNodeType.Element && rels.LocalName == "Relationship" && rels.GetAttribute("Id") is { } id && rels.GetAttribute("Target") is { } tg)
+                        targets.TryAdd(id, tg);
+        var names = new List<(string Name, string Path)>();
+        var wb = Reader(z, "xl/workbook.xml", b);
+        if (wb is not null)
+            using (wb)
+                while (wb.Read())
+                    if (wb.NodeType == XmlNodeType.Element && wb.LocalName == "sheet"
+                        && wb.GetAttribute("id", "http://schemas.openxmlformats.org/officeDocument/2006/relationships") is { } rid
+                        && targets.TryGetValue(rid, out var t))
+                        names.Add((wb.GetAttribute("name") ?? "Sheet", t.StartsWith('/') ? t.TrimStart('/') : "xl/" + t));
+        if (names.Count == 0)
+            names = z.Entries.Where(e => e.FullName.StartsWith("xl/worksheets/sheet", StringComparison.Ordinal))
+                .Select(e => (Path.GetFileNameWithoutExtension(e.Name), e.FullName)).ToList();
+
+        int page = 0;
+        foreach (var (name, path) in names.DistinctBy(n => n.Path))
+        {
+            var x = Reader(z, path, b);
+            if (x is null) continue;
+            var sb = new StringBuilder($"Sheet: {name}\n");
+            using (x)
+            {
+                var cells = new List<string>();
+                string type = "";
+                bool more = x.Read();
+                while (more)
+                {
+                    if (x.NodeType == XmlNodeType.Element && x.LocalName is "v" or "t" && !x.IsEmptyElement)
+                    {
+                        var v = x.ReadElementContentAsString();
+                        if (type == "s" && int.TryParse(v, out var i) && i >= 0 && i < shared.Count) v = shared[i];
+                        cells.Add(v);
+                        more = !x.EOF;
+                        continue;
+                    }
+                    if (x.NodeType == XmlNodeType.Element && x.LocalName == "row") cells.Clear();
+                    else if (x.NodeType == XmlNodeType.Element && x.LocalName == "c") type = x.GetAttribute("t") ?? "";
+                    else if (x.NodeType == XmlNodeType.EndElement && x.LocalName == "row" && cells.Any(c => c.Length > 0))
+                        Add(sb, string.Join(" | ", cells) + "\n", b);
+                    more = x.Read();
+                }
+            }
+            r.Parts.Add(new TextPart(++page, sb.ToString()));
         }
     }
 }
