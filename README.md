@@ -8,7 +8,38 @@ security products are bundled. See `docs/ROADMAP.md` for every service line and 
 |---|---|---|
 | `src/NightTech.Business.Core` | Shared: branding, logging, the Security Checkup rules and reports | v0.1 |
 | `src/NightTech.SecurityCheckup` | **Night Tech Security Checkup**: checks a business computer's security and writes a plain-language report | v0.1 |
+| `src/NightTech.PrivateAi` | **Night Tech Private AI**: the private AI chat app that runs on the customer's computer, for their network only | v0.1 |
+| `src/NightTech.AiSetup` | **Night Tech AI Setup**: technician tool that checks the hardware and installs Private AI | v0.1 |
 | `tests/NightTech.Business.Tests` | Automated tests (run on every push) | |
+
+## Night Tech Private AI
+
+An AI assistant that runs on a computer the customer owns. Our own app on top of Ollama (the open-source engine that
+runs the model); the model is an open one (Gemma, Llama, Qwen, Phi, gpt-oss, Mistral) downloaded once.
+
+- **Network only:** answers only computers on the same network (private ranges and the computer's own network prefixes),
+  and only by this computer's own name or address. Firewall rule limited to the local subnet, Private/Domain networks.
+- **Sign-ins:** each person has an account (salted PBKDF2-SHA256; passwords are never stored). 12-hour sessions; changing
+  a password or admin status ends that person's sign-ins. Wrong passwords lock a name for 5 minutes after 5 tries.
+- **Chats** are private to each person (`chats\<user>\*.json`). Answers stream in as they're written.
+- **Document library:** administrators add PDF, Word, Excel, PowerPoint, text and web pages. Our own readers extract the
+  text (no outside libraries), it's split into passages and indexed with a small local "embedding" model. With
+  "Answer from our documents" on, the AI answers from the closest passages and shows which file and page each came from.
+- **Data:** `C:\ProgramData\Night Tech Private AI` (settings, accounts, chats, library, logs), limited to administrators
+  and Windows itself. Models in `C:\ProgramData\Night Tech Private AI Models` (read-only for users).
+- Runs as a startup task (as Windows itself) so it works before anyone signs in, and starts the AI engine itself when
+  needed. The page has a strict Content-Security-Policy and builds everything with DOM calls (no HTML injection).
+- Command line for the setup tool: `NightTechPrivateAi.exe add-user <name> [--admin] [--display "Name"]` and
+  `set-password <name>` (password on standard input), `status`.
+
+## Night Tech AI Setup
+
+Run as administrator on the customer's computer (installed, or from the USB kit). It reads the processor, memory, graphics
+cards (real memory size from the driver registry and `nvidia-smi`) and disk, recommends a model, then: installs Ollama
+under Program Files (only after Windows confirms the installer is signed by Ollama), downloads the models, copies Private
+AI to Program Files, saves settings and locks the data folder, creates the administrator, registers the startup task,
+adds the firewall rule and checks it answers. Every step is logged and re-runnable. Writes a setup report (`.txt` for the
+customer, `.json` for the Hub ticket). "Remove Private AI" takes it off again.
 
 ## Night Tech Security Checkup
 
