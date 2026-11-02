@@ -46,7 +46,7 @@ public static class Recommender
             mode = RunMode.GraphicsCard;
             budget = gpu.MemoryGb;
             notes.Add($"Runs on the graphics card ({gpu.Name}, {gpu.MemoryGb:0.#} GB).");
-            if (hw.RamGb < 16) notes.Add($"Only {hw.RamGb:0.#} GB of memory. 16 GB or more is recommended alongside the graphics card.");
+            if (hw.RamGb < 15) notes.Add($"Only {hw.RamGb:0.#} GB of memory. 16 GB or more is recommended alongside the graphics card."); // 16 GB shows as 15.9
         }
         else
         {
