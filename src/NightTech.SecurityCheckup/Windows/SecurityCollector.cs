@@ -256,7 +256,7 @@ public static class SecurityCollector
         {
             var ctx = new ManagementNamedValueCollection { { "PolicyStore", "ActiveStore" } };
             var scope = new ManagementScope(@"root\StandardCimv2");
-            var options = new EnumerationOptions { Context = ctx, Timeout = TimeSpan.FromSeconds(30) };
+            var options = new System.Management.EnumerationOptions { Context = ctx, Timeout = TimeSpan.FromSeconds(30) };
             using var searcher = new ManagementObjectSearcher(scope, new ObjectQuery("SELECT Name, Enabled FROM MSFT_NetFirewallProfile"), options);
             using var results = searcher.Get();
             foreach (ManagementBaseObject o in results)
