@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>NightTech.Business.Core</RootNamespace>
+    <AssemblyName>NightTech.Business.Core</AssemblyName>
+    <Company>Night Tech Solutions</Company>
+    <Product>Night Tech Business Tools</Product>
+    <Copyright>Copyright (c) Night Tech Solutions</Copyright>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="NightTech.Business.Tests" />
+  </ItemGroup>
+
+</Project>

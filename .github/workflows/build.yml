@@ -1,0 +1,47 @@
+name: Build and test
+
+on:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Test
+        run: dotnet test tests/NightTech.Business.Tests/NightTech.Business.Tests.csproj -c Release --logger "trx;LogFileName=results.trx"
+
+      - name: Build every tool
+        run: dotnet build NightTech.Business.sln -c Release
+
+      - name: Install Inno Setup
+        run: choco install innosetup --version 6.7.1 --no-progress -y
+
+      # Each tool's version comes from its .csproj, so one release can carry tools at different versions.
+      - name: Build installers and USB kit
+        shell: pwsh
+        run: ./build.ps1 -SkipTests
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NightTech-Business-installers
+          path: installer/Output/*
+
+      - name: Attach installers to the release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: installer/Output/*
