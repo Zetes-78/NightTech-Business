@@ -38,7 +38,9 @@ public class SecurityRulesTests
 
     [Theory]
     [InlineData("Off", CheckStatus.Fail)]
-    [InlineData("Suspended", CheckStatus.Warn)]
+    [InlineData("Suspended", CheckStatus.Fail)]
+    [InlineData("Encrypting", CheckStatus.Warn)]
+    [InlineData("Unavailable", CheckStatus.Fail)]
     [InlineData("On", CheckStatus.Pass)]
     [InlineData("", CheckStatus.NotChecked)]
     public void Bitlocker(string state, CheckStatus expected)
@@ -108,6 +110,8 @@ public class SecurityRulesTests
         Assert.Equal(CheckStatus.Pass, One(r, "antivirus").Status);
         Assert.Contains("Bitdefender", One(r, "antivirus").Found);
         Assert.DoesNotContain(r, x => x.Id is "realtime" or "tamper");
+        Assert.False(SecurityRules.IsMicrosoftDefender("Bitdefender Antivirus Plus"));
+        Assert.True(SecurityRules.IsMicrosoftDefender("Windows Defender"));
     }
 
     [Fact]
@@ -262,7 +266,7 @@ public class SecurityRulesTests
         var html = SecurityReportWriter.ToHtml(rep);
         Assert.DoesNotContain("<b>PC</b>", html);
         Assert.Contains("Joe&#39;s Diner &amp; Grill", html);
-        Assert.Contains(SecurityReportWriter.Disclaimer, html);
+        Assert.Contains(System.Net.WebUtility.HtmlEncode(SecurityReportWriter.Disclaimer), html);
         Assert.Contains("FIX SOON", html);
         var dir = Path.Combine(Path.GetTempPath(), "ntsc-" + Guid.NewGuid().ToString("N"));
         try

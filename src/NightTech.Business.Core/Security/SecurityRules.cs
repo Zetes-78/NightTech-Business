@@ -68,7 +68,7 @@ public static class SecurityRules
 
         // Defender's numbers only count when Defender is the antivirus doing the work.
         var enabledAv = f.Antivirus.Where(a => a.Enabled).ToList();
-        bool defenderActive = enabledAv.Any(a => a.Name.Contains("Defender", StringComparison.OrdinalIgnoreCase))
+        bool defenderActive = enabledAv.Any(a => IsMicrosoftDefender(a.Name))
                               || (f.Antivirus.Count == 0 && f.DefenderRealTime == true);
         int? sigAge = defenderActive ? f.DefenderSignatureAgeDays : null;
         if (f.Antivirus.Count == 0 && f.DefenderRealTime is null)
@@ -274,6 +274,10 @@ public static class SecurityRules
         }
         return r;
     }
+
+    /// <summary>Microsoft's own antivirus ("Microsoft Defender Antivirus", "Windows Defender"), not products like Bitdefender.</summary>
+    public static bool IsMicrosoftDefender(string name) =>
+        name.Contains("Microsoft Defender", StringComparison.OrdinalIgnoreCase) || name.Contains("Windows Defender", StringComparison.OrdinalIgnoreCase);
 
     public static string PortName(int port) => port switch
     {
