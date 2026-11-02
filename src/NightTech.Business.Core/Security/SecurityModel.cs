@@ -8,6 +8,8 @@ public sealed class SecurityFacts
     public string ComputerName { get; set; } = "";
     public string OsName { get; set; } = "";
     public string OsBuild { get; set; } = "";
+    /// <summary>Home, Pro, Enterprise, Education, Server... as Windows names it (the edition ID).</summary>
+    public string OsEdition { get; set; } = "";
     public DateTime? LastUpdateInstalled { get; set; }
     public bool RanAsAdministrator { get; set; }
 
@@ -18,6 +20,9 @@ public sealed class SecurityFacts
     public bool? DefenderRealTime { get; set; }
     public int? DefenderSignatureAgeDays { get; set; }
     public bool? DefenderTamperProtected { get; set; }
+    public bool? FirewallServiceRunning { get; set; }
+    /// <summary>Firewalls other than Windows' own that Security Center reports.</summary>
+    public List<AntivirusInfo> OtherFirewalls { get; set; } = new();
     public bool? FirewallDomain { get; set; }
     public bool? FirewallPrivate { get; set; }
     public bool? FirewallPublic { get; set; }
@@ -26,6 +31,10 @@ public sealed class SecurityFacts
 
     // Accounts
     public bool? UacEnabled { get; set; }
+    /// <summary>"Never notify" for admins: UAC is on but never asks.</summary>
+    public bool? UacNeverNotify { get; set; }
+    /// <summary>The admin list couldn't be read completely (for example work-account members that didn't resolve).</summary>
+    public bool AdminListIncomplete { get; set; }
     public List<string> LocalAdmins { get; set; } = new();
     public bool? BuiltInAdminEnabled { get; set; }
     public bool? GuestEnabled { get; set; }
@@ -37,20 +46,26 @@ public sealed class SecurityFacts
     public bool? CurrentUserIsAdmin { get; set; }
     public bool? AutoLogon { get; set; }
     public bool? AutoLogonPasswordStored { get; set; }
-    /// <summary>Seconds of inactivity before the screen locks; null when no lock is set up.</summary>
+    /// <summary>Seconds of no use before the screen locks (screen saver with password, or sleep with sign-in on wake).</summary>
     public int? ScreenLockSeconds { get; set; }
+    public bool ScreenLockChecked { get; set; }
     public bool? DomainJoined { get; set; }
+    /// <summary>Joined to Microsoft Entra ID (work or school account).</summary>
+    public bool? EntraJoined { get; set; }
 
     // Exposure
+    public bool AccountsChecked { get; set; }
     public bool? RemoteDesktopOn { get; set; }
     public bool? RemoteDesktopNla { get; set; }
     public bool? Smb1On { get; set; }
     public bool? PowerShell2On { get; set; }
     public List<int> ListeningPorts { get; set; } = new();
+    public bool PortsChecked { get; set; }
     public List<string> Shares { get; set; } = new();
     public bool? AutoRunOff { get; set; }
 
     // Software
+    public bool SoftwareChecked { get; set; }
     public List<string> RemoteAccessApps { get; set; } = new();
     public List<string> EndOfLifeApps { get; set; } = new();
 

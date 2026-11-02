@@ -130,6 +130,12 @@ public static class SecurityReportWriter
         Meta(s, "Checked", Format.DateAndTime(r.Checked)); Meta(s, "Technician", r.Technician); Meta(s, "Ticket", r.Ticket);
         s.Append("</table></section>");
         Body(s, r.Results);
+        if (r.Facts.Notes.Count > 0)
+        {
+            s.Append("<section><h2>Notes</h2><ul>");
+            foreach (var n in r.Facts.Notes) s.Append("<li>").Append(E(n)).Append("</li>");
+            s.Append("</ul></section>");
+        }
         Foot(s, $"{r.Tool} {r.ToolVersion}");
         return s.ToString();
     }
@@ -175,26 +181,45 @@ public static class SecurityReportWriter
         Meta(s, "Dates", latest.Count == 0 ? "" : $"{Format.Date(latest.First().Checked)} to {Format.Date(latest.Last().Checked)}");
         s.Append("</table></section>");
 
-        // Computer-specific checks: count the computers each problem appears on.
+        // Computer-specific checks: on how many computers each check failed, passed or couldn't be checked.
         var perPc = latest.SelectMany(rep => rep.Results.Where(x => !x.Id.StartsWith("q_", StringComparison.Ordinal))
                 .Select(x => (Pc: rep.Facts.ComputerName, Res: x)))
             .GroupBy(x => x.Res.Id).ToList();
-        // Owner answers apply to the whole business: take the most recent answer.
-        var owner = latest.LastOrDefault()?.Results.Where(x => x.Id.StartsWith("q_", StringComparison.Ordinal)).ToList() ?? new List<CheckResult>();
+        int Rank(CheckStatus st) => st switch { CheckStatus.Fail => 0, CheckStatus.Warn => 1, CheckStatus.NotChecked => 2, CheckStatus.Pass => 3, _ => 4 };
 
         var combined = new List<CheckResult>();
         foreach (var g in perPc)
         {
-            var worst = g.OrderBy(x => x.Res.Status switch { CheckStatus.Fail => 0, CheckStatus.Warn => 1, CheckStatus.Pass => 2, CheckStatus.Info => 3, _ => 4 }).First().Res;
-            var bad = g.Where(x => x.Res.Status is CheckStatus.Fail or CheckStatus.Warn).Select(x => x.Pc).Distinct().ToList();
-            combined.Add(new CheckResult
+            var worst = g.OrderBy(x => Rank(x.Res.Status)).First().Res;
+            string Pcs(Func<CheckStatus, bool> pick) => string.Join(", ", g.Where(x => pick(x.Res.Status)).Select(x => x.Pc).Distinct());
+            int Count(Func<CheckStatus, bool> pick) => g.Where(x => pick(x.Res.Status)).Select(x => x.Pc).Distinct().Count();
+            var bad = Count(st => st is CheckStatus.Fail or CheckStatus.Warn);
+            var unchecked_ = Count(st => st == CheckStatus.NotChecked);
+            var ok = Count(st => st == CheckStatus.Pass);
+            var missing = latest.Count - g.Select(x => x.Pc).Distinct().Count();
+            string found;
+            if (worst.Status == CheckStatus.Info)
+                found = string.Join(" ", g.Select(x => $"{x.Pc}: {x.Res.Found}"));
+            else
             {
-                Id = worst.Id, Area = worst.Area, Title = worst.Title, Status = worst.Status, Priority = worst.Priority, Fix = worst.Fix,
-                Found = bad.Count > 0 ? $"On {bad.Count} of {latest.Count} computer(s): {string.Join(", ", bad)}." :
-                        worst.Status == CheckStatus.Pass ? $"OK on every computer checked." : worst.Found,
-            });
+                var parts = new List<string>();
+                if (bad > 0) parts.Add($"needs attention on {bad} of {latest.Count} computer(s): {Pcs(st => st is CheckStatus.Fail or CheckStatus.Warn)}");
+                if (ok > 0) parts.Add(bad == 0 && unchecked_ == 0 && missing == 0 ? "OK on every computer checked" : $"OK on {ok}");
+                if (unchecked_ > 0) parts.Add($"not checked on {unchecked_} ({Pcs(st => st == CheckStatus.NotChecked)})");
+                if (missing > 0) parts.Add($"not part of {missing} computer's report");
+                found = char.ToUpperInvariant(parts[0][0]) + parts[0][1..] + (parts.Count > 1 ? "; " + string.Join("; ", parts.Skip(1)) : "") + ".";
+            }
+            combined.Add(new CheckResult { Id = worst.Id, Area = worst.Area, Title = worst.Title, Status = worst.Status, Priority = worst.Priority, Fix = worst.Fix, Found = found });
         }
-        combined.AddRange(owner);
+
+        // Owner answers apply to the whole business: for each question, the most recent report where it was asked.
+        foreach (var q in SecurityRules.Questions)
+        {
+            var answered = latest.LastOrDefault(rep => rep.Results.Any(x => x.Id == "q_" + q.Id && x.Status != CheckStatus.NotChecked))
+                           ?? latest.LastOrDefault(rep => rep.Results.Any(x => x.Id == "q_" + q.Id));
+            var res = answered?.Results.FirstOrDefault(x => x.Id == "q_" + q.Id);
+            if (res is not null) combined.Add(res);
+        }
         Body(s, combined);
 
         s.Append("<section><h2>Computers</h2><table class=\"checks\">");

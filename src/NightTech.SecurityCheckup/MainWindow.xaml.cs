@@ -20,6 +20,8 @@ public partial class MainWindow : Window
         ModeText.Text = App.Portable ? "Running from the USB kit" : "Installed on this computer";
         AdminCard.Visibility = SecurityCollector.IsAdministrator ? Visibility.Collapsed : Visibility.Visible;
         QuestionList.ItemsSource = _questions;
+        LoadSession();
+        Closing += (_, _) => SaveSession();
         App.Log.LineWritten += line => Dispatcher.InvokeAsync(() =>
         {
             LogList.Items.Add(line);
@@ -29,8 +31,67 @@ public partial class MainWindow : Window
         App.Log.Info("Reports are saved in: " + App.ReportsFolder);
     }
 
+    // ---------------- Carrying the visit over (next computer, restart as administrator) ----------------
+
+    private sealed class Session
+    {
+        public DateTime Saved { get; set; }
+        public string Business { get; set; } = "";
+        public string Ticket { get; set; } = "";
+        public string Technician { get; set; } = "";
+        public Dictionary<string, Answer> Answers { get; set; } = new();
+    }
+
+    private static string SessionPath => Path.Combine(App.ReportsFolder, "current-visit.json");
+
+    /// <summary>Saves the business details and the owner's answers next to the reports, so they carry over to the next computer today.</summary>
+    private void SaveSession()
+    {
+        try
+        {
+            Directory.CreateDirectory(App.ReportsFolder);
+            var session = new Session
+            {
+                Saved = DateTime.Now, Business = BusinessBox.Text.Trim(), Ticket = TicketBox.Text.Trim(), Technician = TechBox.Text.Trim(),
+                Answers = _questions.ToDictionary(q => q.Id, q => q.Answer),
+            };
+            File.WriteAllText(SessionPath, System.Text.Json.JsonSerializer.Serialize(session, SecurityReportWriter.Json));
+        }
+        catch (Exception ex) { App.Log.Warn("Couldn't save this visit's answers: " + ex.Message); }
+    }
+
+    private void LoadSession()
+    {
+        try
+        {
+            if (!File.Exists(SessionPath)) return;
+            var session = System.Text.Json.JsonSerializer.Deserialize<Session>(File.ReadAllText(SessionPath), SecurityReportWriter.Json);
+            if (session is null || (DateTime.Now - session.Saved).TotalHours > 18) return; // a different visit
+            BusinessBox.Text = session.Business;
+            TicketBox.Text = session.Ticket;
+            TechBox.Text = session.Technician;
+            foreach (var q in _questions)
+                if (session.Answers.TryGetValue(q.Id, out var a)) q.Answer = a;
+            QuestionList.ItemsSource = null;
+            QuestionList.ItemsSource = _questions;
+            App.Log.Info($"Carried over this visit's details for {(session.Business.Length > 0 ? session.Business : "the business")}.");
+        }
+        catch (Exception ex) { App.Log.Warn("Couldn't load the last visit's answers: " + ex.Message); }
+    }
+
+    private void NewVisit_Click(object sender, RoutedEventArgs e)
+    {
+        BusinessBox.Text = TicketBox.Text = "";
+        foreach (var q in _questions) q.Answer = Answer.NotAsked;
+        QuestionList.ItemsSource = null;
+        QuestionList.ItemsSource = _questions;
+        try { File.Delete(SessionPath); } catch { }
+        App.Log.Info("Started a new visit.");
+    }
+
     private async void Run_Click(object sender, RoutedEventArgs e)
     {
+        SaveSession();
         RunButton.IsEnabled = false;
         OpenReportButton.IsEnabled = false;
         Busy.Visibility = Visibility.Visible;
@@ -92,6 +153,7 @@ public partial class MainWindow : Window
             InitialDirectory = App.ReportsFolder,
         };
         if (pick.ShowDialog(this) != true) return;
+        SaveSession();
         var reports = new List<SecurityReport>();
         foreach (var file in pick.FileNames)
         {
@@ -130,6 +192,7 @@ public partial class MainWindow : Window
         try
         {
             if (Environment.ProcessPath is not { } exe) return;
+            SaveSession(); // the administrator copy picks these up
             Process.Start(new ProcessStartInfo(exe) { UseShellExecute = true, Verb = "runas" });
             Application.Current.Shutdown();
         }
@@ -152,7 +215,11 @@ public sealed class QuestionView
     public string Question { get; }
     public string[] Choices => Options;
     public string Choice { get; set; } = "Not asked";
-    public Answer Answer => Choice switch { "Yes" => Answer.Yes, "No" => Answer.No, "Not sure" => Answer.NotSure, _ => Answer.NotAsked };
+    public Answer Answer
+    {
+        get => Choice switch { "Yes" => Answer.Yes, "No" => Answer.No, "Not sure" => Answer.NotSure, _ => Answer.NotAsked };
+        set => Choice = value switch { Answer.Yes => "Yes", Answer.No => "No", Answer.NotSure => "Not sure", _ => "Not asked" };
+    }
 }
 
 public sealed class ResultView

@@ -9,7 +9,9 @@ public class SecurityRulesTests
     /// <summary>A well-set-up Windows 11 PC.</summary>
     private static SecurityFacts Good() => new()
     {
-        ComputerName = "FRONT-DESK", OsName = "Microsoft Windows 11 Pro", LastUpdateInstalled = Now.AddDays(-10), RanAsAdministrator = true,
+        ComputerName = "FRONT-DESK", OsName = "Microsoft Windows 11 Pro", OsBuild = "26200", OsEdition = "Professional",
+        LastUpdateInstalled = Now.AddDays(-10), RanAsAdministrator = true,
+        AccountsChecked = true, PortsChecked = true, SoftwareChecked = true, ScreenLockChecked = true, FirewallServiceRunning = true, EntraJoined = false,
         BitLockerSystemDrive = "On",
         Antivirus = { AntivirusInfo.FromProductState("Microsoft Defender Antivirus", 397568) },
         DefenderRealTime = true, DefenderSignatureAgeDays = 0, DefenderTamperProtected = true,
@@ -74,12 +76,89 @@ public class SecurityRulesTests
     }
 
     [Fact]
-    public void Windows_10_is_flagged_but_not_ltsc()
+    public void Windows_10_is_flagged_but_not_ltsc_2019()
     {
-        var f = Good(); f.OsName = "Microsoft Windows 10 Pro";
+        var f = Good(); f.OsName = "Microsoft Windows 10 Pro"; f.OsBuild = "19045";
         Assert.Equal(CheckStatus.Fail, One(Eval(f), "os_support").Status);
-        f.OsName = "Microsoft Windows 10 Enterprise LTSC";
+        f.OsName = "Microsoft Windows 10 Enterprise LTSC 2019"; f.OsBuild = "17763"; f.OsEdition = "EnterpriseS";
         Assert.Equal(CheckStatus.Pass, One(Eval(f), "os_support").Status);
+    }
+
+    [Theory]
+    [InlineData("Microsoft Windows 11 Pro", "26100", "Professional", CheckStatus.Fail)]    // 24H2 Home/Pro ended Oct 13, 2026
+    [InlineData("Microsoft Windows 11 Enterprise", "26100", "Enterprise", CheckStatus.Pass)] // Enterprise until Oct 2027
+    [InlineData("Microsoft Windows 11 Home", "22631", "Core", CheckStatus.Fail)]           // 23H2 Home ended Nov 2025
+    [InlineData("Microsoft Windows 11 Enterprise", "22631", "Enterprise", CheckStatus.Warn)] // 23H2 Enterprise ends Nov 10, 2026
+    [InlineData("Microsoft Windows 11 Pro", "26200", "Professional", CheckStatus.Pass)]
+    [InlineData("Microsoft Windows Server 2019 Standard", "17763", "ServerStandard", CheckStatus.Pass)]
+    [InlineData("Microsoft Windows 8.1 Pro", "9600", "Professional", CheckStatus.Fail)]
+    public void Windows_support_dates(string caption, string build, string edition, CheckStatus expected)
+    {
+        var f = Good(); f.OsName = caption; f.OsBuild = build; f.OsEdition = edition;
+        Assert.Equal(expected, One(Eval(f), "os_support").Status);
+    }
+
+    [Fact]
+    public void Another_antivirus_isnt_judged_by_defenders_old_definitions()
+    {
+        var f = Good();
+        f.Antivirus = new() { AntivirusInfo.FromProductState("Bitdefender Antivirus", 266240), AntivirusInfo.FromProductState("Microsoft Defender Antivirus", 393472) };
+        f.DefenderSignatureAgeDays = 212; f.DefenderRealTime = false; f.DefenderTamperProtected = false;
+        var r = Eval(f);
+        Assert.Equal(CheckStatus.Pass, One(r, "antivirus").Status);
+        Assert.Contains("Bitdefender", One(r, "antivirus").Found);
+        Assert.DoesNotContain(r, x => x.Id is "realtime" or "tamper");
+    }
+
+    [Fact]
+    public void Firewall_service_stopped_fails_third_party_firewall_passes_domain_profile_ignored_off_domain()
+    {
+        var f = Good(); f.FirewallServiceRunning = false;
+        Assert.Equal(CheckStatus.Fail, One(Eval(f), "firewall").Status);
+        f = Good(); f.FirewallPrivate = false; f.FirewallPublic = false; f.OtherFirewalls = new() { AntivirusInfo.FromProductState("Norton Firewall", 266240) };
+        Assert.Equal(CheckStatus.Pass, One(Eval(f), "firewall").Status);
+        f = Good(); f.FirewallDomain = false; f.DomainJoined = false;
+        Assert.Equal(CheckStatus.Pass, One(Eval(f), "firewall").Status);
+        f.DomainJoined = true;
+        Assert.Equal(CheckStatus.Fail, One(Eval(f), "firewall").Status);
+    }
+
+    [Fact]
+    public void Anything_not_checked_still_shows_as_not_checked()
+    {
+        var f = new SecurityFacts { ComputerName = "X" };   // every check failed or timed out
+        var r = Eval(f);
+        foreach (var id in new[] { "bitlocker", "antivirus", "firewall", "os_support", "updates", "secureboot", "tpm", "uac", "daily_admin",
+                                   "admins", "pw_length", "lockout", "screenlock", "rdp", "smb1", "ports", "remote_apps" })
+            Assert.Equal(CheckStatus.NotChecked, One(r, id).Status);
+        Assert.DoesNotContain(r, x => x.Status == CheckStatus.Pass && !x.Id.StartsWith("q_"));
+    }
+
+    [Fact]
+    public void No_backup_means_the_restore_test_question_is_skipped()
+    {
+        var a = AllYes(); a["backup_offsite"] = Answer.No; a["backup_tested"] = Answer.No;
+        var r = Eval(Good(), a);
+        Assert.DoesNotContain(r, x => x.Id == "q_backup_tested");
+        Assert.Equal(CheckStatus.Fail, One(r, "q_backup_offsite").Status);
+    }
+
+    [Fact]
+    public void Screen_lock_never_set_warns_only_when_checked()
+    {
+        var f = Good(); f.ScreenLockSeconds = null;
+        Assert.Equal(CheckStatus.Warn, One(Eval(f), "screenlock").Status);
+        f.ScreenLockChecked = false;
+        Assert.Equal(CheckStatus.NotChecked, One(Eval(f), "screenlock").Status);
+    }
+
+    [Fact]
+    public void Work_account_pc_doesnt_judge_local_password_rules()
+    {
+        var f = Good(); f.EntraJoined = true; f.LockoutThreshold = 0;
+        var r = Eval(f);
+        Assert.DoesNotContain(r, x => x.Id == "lockout");
+        Assert.Contains("Microsoft Entra", One(r, "pw_policy").Found);
     }
 
     [Fact]
@@ -99,7 +178,7 @@ public class SecurityRulesTests
         f.AutoLogon = true; f.AutoLogonPasswordStored = true; f.LockoutThreshold = 0; f.MinPasswordLength = 0;
         var r = Eval(f);
         Assert.Equal(CheckStatus.Fail, One(r, "guest").Status);
-        Assert.Equal(CheckStatus.Warn, One(r, "pw_required").Status);
+        Assert.Equal(CheckStatus.Info, One(r, "pw_required").Status);
         Assert.Equal(CheckStatus.Fail, One(r, "uac").Status);
         Assert.Equal(CheckStatus.Warn, One(r, "daily_admin").Status);
         Assert.Equal(CheckStatus.Fail, One(r, "autologon").Status);
@@ -142,9 +221,12 @@ public class SecurityRulesTests
     [Fact]
     public void Software_lists_match_by_name()
     {
-        var installed = new[] { "TeamViewer 15", "AnyDesk", "Google Chrome", "Java(TM) 6 Update 45", "Java 17.0.2 (64-bit)", "Microsoft Office 2013" };
+        var installed = new[] { "TeamViewer 15", "AnyDesk", "Google Chrome", "Java(TM) 6 Update 45", "Java 17.0.2 (64-bit)",
+                                "Microsoft Office Home and Business 2013", "Microsoft Office 2010 Primary Interop Assemblies", "Microsoft Office Professional Plus 2019",
+                                "Microsoft 365 Apps for business - en-us" };
         Assert.Equal(new[] { "AnyDesk", "TeamViewer 15" }, SecurityRules.Match(installed, SecurityRules.RemoteAccessNames));
-        Assert.Equal(new[] { "Java(TM) 6 Update 45", "Microsoft Office 2013" }, SecurityRules.Match(installed, SecurityRules.EndOfLifeNames));
+        Assert.Equal(new[] { "Java(TM) 6 Update 45", "Microsoft Office Home and Business 2013", "Microsoft Office Professional Plus 2019" },
+            SecurityRules.EndOfLife(installed));
     }
 
     [Fact]
@@ -213,9 +295,25 @@ public class SecurityRulesTests
             Rep("OFFICE", f => f.BitLockerSystemDrive = "Off", Now.AddHours(-1)),
             Rep("KITCHEN", _ => { }, Now),
         };
-        var html = SecurityReportWriter.ToBusinessSummaryHtml(reports, "Joe's Diner");
-        Assert.Contains("On 2 of 3 computer(s): FRONT, OFFICE.", html);
+        var html = SecurityReportWriter.ToBusinessSummaryHtml(reports, "Joe&#39;s Diner".Replace("&#39;", "'"));
+        Assert.Contains("Needs attention on 2 of 3 computer(s): FRONT, OFFICE; OK on 1.", html);
         Assert.Contains("OK on every computer checked.", html);
         Assert.Contains("KITCHEN", html);
+    }
+
+    [Fact]
+    public void Business_summary_shows_not_checked_and_keeps_answers_given_on_an_earlier_computer()
+    {
+        var a = AllYes(); a["mfa_email"] = Answer.No;
+        var first = new SecurityReport { Business = "B", Checked = Now.AddHours(-1), Facts = Good(), Answers = a };
+        first.Facts.ComputerName = "ONE";
+        first.Results = SecurityRules.Evaluate(first.Facts, first.Answers, Now);
+        var second = new SecurityReport { Business = "B", Checked = Now, Facts = Good(), Answers = new() };   // answers not asked again
+        second.Facts.ComputerName = "TWO"; second.Facts.TpmReady = null;
+        second.Results = SecurityRules.Evaluate(second.Facts, second.Answers, Now);
+        var html = SecurityReportWriter.ToBusinessSummaryHtml(new[] { first, second }, "B");
+        Assert.Contains("OK on 1; not checked on 1 (TWO).", html);
+        Assert.Contains("The owner said no.", html);         // MFA answer from ONE is kept
+        Assert.DoesNotContain("Not asked.", html);
     }
 }

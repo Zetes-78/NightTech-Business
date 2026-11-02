@@ -25,9 +25,13 @@ never read (for automatic sign-in it only notes whether a password is stored).
 - **Owner questions** (a computer can't show these): multi-factor sign-in on email and money accounts, password manager,
   off-site backup and restore tests, guest Wi-Fi, router password, removing former staff, scam awareness
 
-Each result is PASS, IMPROVE, FIX SOON, NOTE or NOT CHECKED, with what was found and how to fix it. Reports: `.html` for
+Windows support dates come from a table by build and edition (`WindowsSupport.cs`); keep it current as Microsoft
+publishes new versions. Each result is PASS, IMPROVE, FIX SOON, NOTE or NOT CHECKED (anything that couldn't be read
+is shown as NOT CHECKED, never left out), with what was found and how to fix it. Reports: `.html` for
 the owner (fixes in order), `.txt` for the Hub ticket, `.json` to combine. **Business summary** combines every computer's
 report into one page ("BitLocker off on 2 of 3 computers: FRONT, OFFICE").
+
+In portable mode the USB stick holds every client's reports: encrypt it with BitLocker To Go.
 
 ## Install and build
 

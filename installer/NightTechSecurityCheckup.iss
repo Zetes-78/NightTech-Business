@@ -40,7 +40,7 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 
 [Files]
 Source: "..\publish\securitycheckup\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "..\README.md"; DestDir: "{app}"; DestName: "README.txt"; Flags: ignoreversion
+Source: "..\packaging\USB-README.txt"; DestDir: "{app}"; DestName: "README.txt"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\Night Tech Security Checkup"; Filename: "{app}\{#AppExe}"

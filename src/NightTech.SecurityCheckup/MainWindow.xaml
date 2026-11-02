@@ -49,7 +49,8 @@
               <TextBlock Text="Ticket number (from Night Tech Hub)" Foreground="{StaticResource Muted}" />
               <TextBox x:Name="TicketBox" Margin="0,2,0,8" MaxLength="20" />
               <TextBlock Text="Technician" Foreground="{StaticResource Muted}" />
-              <TextBox x:Name="TechBox" Margin="0,2,0,0" MaxLength="80" />
+              <TextBox x:Name="TechBox" Margin="0,2,0,8" MaxLength="80" />
+              <Button Content="Start a new visit (clear the business and answers)" Style="{StaticResource PlainButton}" Click="NewVisit_Click" />
             </StackPanel>
           </Border>
 
@@ -57,7 +58,7 @@
             <StackPanel>
               <TextBlock Text="2. Ask the owner" Style="{StaticResource SectionTitle}" />
               <TextBlock TextWrapping="Wrap" Foreground="{StaticResource Muted}" Margin="0,0,0,8"
-                         Text="A computer can't show these. Ask once per business: the answers carry over to each computer you check today." />
+                         Text="A computer can't show these. Ask once per visit: the answers are saved with the reports and carry over to each computer you check today (and through Restart as administrator)." />
               <ItemsControl x:Name="QuestionList">
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
