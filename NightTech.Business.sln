@@ -1,4 +1,4 @@
-
+﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
@@ -12,6 +12,8 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFA8}") = "NightTech.SecurityCheckup", "src\NightTech.SecurityCheckup\NightTech.SecurityCheckup.csproj", "{93CF7326-5ABD-418B-86CA-B2BF9979351F}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFA8}") = "NightTech.Business.Tests", "tests\NightTech.Business.Tests\NightTech.Business.Tests.csproj", "{C3266175-B840-4B5F-9B46-4D210F130E91}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NightTech.PrivateAi", "src\NightTech.PrivateAi\NightTech.PrivateAi.csproj", "{1C449F31-0947-4A2C-98BB-92EDAD4AC7F0}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -31,10 +33,15 @@ Global
 		{C3266175-B840-4B5F-9B46-4D210F130E91}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{C3266175-B840-4B5F-9B46-4D210F130E91}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{C3266175-B840-4B5F-9B46-4D210F130E91}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1C449F31-0947-4A2C-98BB-92EDAD4AC7F0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1C449F31-0947-4A2C-98BB-92EDAD4AC7F0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1C449F31-0947-4A2C-98BB-92EDAD4AC7F0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1C449F31-0947-4A2C-98BB-92EDAD4AC7F0}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{223C9755-8C37-4E82-BB5A-007CF262369B} = {6FA3E3B1-0A9A-4CF2-9853-3D34D4488EDA}
 		{93CF7326-5ABD-418B-86CA-B2BF9979351F} = {6FA3E3B1-0A9A-4CF2-9853-3D34D4488EDA}
 		{C3266175-B840-4B5F-9B46-4D210F130E91} = {767AD06A-9F85-444D-AABF-CA3281E399B8}
+		{1C449F31-0947-4A2C-98BB-92EDAD4AC7F0} = {6FA3E3B1-0A9A-4CF2-9853-3D34D4488EDA}
 	EndGlobalSection
 EndGlobal

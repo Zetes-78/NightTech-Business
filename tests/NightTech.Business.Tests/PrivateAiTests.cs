@@ -215,7 +215,8 @@ public class PrivateAiTests
         {
             var path = Path.Combine(dir, "users.json");
             var users = new UserStore(path);
-            users.Add("jason", "Jason", "correct horse", true, Now);
+            users.Add("jason", "Jason", "correct horse", false, Now);
+            Assert.True(users.Find("jason")!.IsAdmin); // the first person is always an administrator
             Assert.NotNull(users.Verify("JASON", "correct horse"));
             Assert.Null(users.Verify("jason", "wrong password"));
             Assert.Null(users.Verify("nobody", "correct horse"));
@@ -228,6 +229,11 @@ public class PrivateAiTests
             users.SetPassword("jason", "new password!");
             Assert.NotEqual(stamp, new UserStore(path).Find("jason")!.Stamp);
             Assert.NotNull(new UserStore(path).Verify("jason", "new password!"));
+            // A change made by another program (the setup tool) is picked up.
+            var other = new UserStore(path);
+            File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddMinutes(-5));
+            other.SetPassword("jason", "changed elsewhere");
+            Assert.NotNull(users.Verify("jason", "changed elsewhere"));
         }
         finally { try { Directory.Delete(dir, true); } catch { } }
     }

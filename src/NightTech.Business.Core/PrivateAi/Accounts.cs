@@ -30,16 +30,34 @@ public sealed class UserStore
     private readonly string _path;
     private readonly object _gate = new();
     private List<UserAccount> _users = new();
+    private DateTime _loadedStamp = DateTime.MinValue;
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     public UserStore(string path)
     {
         _path = path;
-        if (File.Exists(path)) _users = JsonSerializer.Deserialize<List<UserAccount>>(File.ReadAllText(path), Json) ?? new();
+        Refresh();
     }
 
-    public IReadOnlyList<UserAccount> All { get { lock (_gate) return _users.ToList(); } }
-    public bool Any { get { lock (_gate) return _users.Count > 0; } }
+    /// <summary>Picks up changes made by the setup tool (for example a password reset) while the server is running.</summary>
+    private void Refresh()
+    {
+        lock (_gate)
+        {
+            try
+            {
+                if (!File.Exists(_path)) return;
+                var stamp = File.GetLastWriteTimeUtc(_path);
+                if (stamp == _loadedStamp) return;
+                _users = JsonSerializer.Deserialize<List<UserAccount>>(File.ReadAllText(_path), Json) ?? new();
+                _loadedStamp = stamp;
+            }
+            catch (IOException) { /* being written right now; keep what we have */ }
+        }
+    }
+
+    public IReadOnlyList<UserAccount> All { get { Refresh(); lock (_gate) return _users.ToList(); } }
+    public bool Any { get { Refresh(); lock (_gate) return _users.Count > 0; } }
 
     public static string? CheckName(string name) =>
         Regex.IsMatch(name ?? "", @"^[A-Za-z0-9][A-Za-z0-9._-]{1,31}$") ? null : "User names are 2 to 32 letters or numbers (dots, dashes and underscores are fine).";
@@ -49,6 +67,7 @@ public sealed class UserStore
 
     public UserAccount? Find(string name)
     {
+        Refresh();
         lock (_gate) return _users.FirstOrDefault(u => string.Equals(u.Name, name, StringComparison.OrdinalIgnoreCase));
     }
 
@@ -59,7 +78,8 @@ public sealed class UserStore
         lock (_gate)
         {
             if (Find(name) is not null) throw new ArgumentException("That user name is already taken.");
-            var u = new UserAccount { Name = name, DisplayName = string.IsNullOrWhiteSpace(displayName) ? name : displayName.Trim(), IsAdmin = admin, Created = now };
+            // The first person is always an administrator, so the AI can always be managed.
+            var u = new UserAccount { Name = name, DisplayName = string.IsNullOrWhiteSpace(displayName) ? name : displayName.Trim(), IsAdmin = admin || _users.Count == 0, Created = now };
             SetHash(u, password);
             _users.Add(u);
             Save();
@@ -125,16 +145,23 @@ public sealed class UserStore
         var tmp = _path + ".tmp";
         File.WriteAllText(tmp, JsonSerializer.Serialize(_users, Json));
         File.Move(tmp, _path, true);
+        _loadedStamp = File.GetLastWriteTimeUtc(_path);
     }
 }
 
-/// <summary>Slows down password guessing: after 5 wrong tries, a name (or address) waits a few minutes.</summary>
+/// <summary>
+/// Slows down password guessing: after too many wrong tries, a user name (5 tries) or a computer (20 tries, since
+/// several people may share one) waits a few minutes.
+/// </summary>
 public sealed class SignInLimiter
 {
     private readonly Dictionary<string, (int Fails, DateTime Until)> _state = new();
     private readonly object _gate = new();
     public const int MaxFails = 5;
+    private readonly int _max;
     public static readonly TimeSpan Lockout = TimeSpan.FromMinutes(5);
+
+    public SignInLimiter(int maxFails = MaxFails) => _max = maxFails;
 
     public TimeSpan? Blocked(string key, DateTime now)
     {
@@ -148,7 +175,7 @@ public sealed class SignInLimiter
         {
             var s = _state.GetValueOrDefault(key);
             s.Fails++;
-            if (s.Fails >= MaxFails) { s.Until = now + Lockout; s.Fails = 0; }
+            if (s.Fails >= _max) { s.Until = now + Lockout; s.Fails = 0; }
             _state[key] = s;
             if (_state.Count > 10_000) _state.Clear();
         }

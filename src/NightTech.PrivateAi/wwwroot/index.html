@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Private AI</title>
+  <link rel="icon" href="logo.png">
+  <link rel="stylesheet" href="app.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <noscript>Private AI needs JavaScript turned on in this browser.</noscript>
+
+  <!-- Sign in / first-time setup -->
+  <main id="gate" class="gate" hidden>
+    <div class="gate-card">
+      <div class="gate-brand"><img src="logo.png" alt="" width="44" height="44"><div><p class="gate-company" id="gate-company">Private AI</p><p class="gate-sub">Private AI. Runs on your own computer.</p></div></div>
+
+      <form id="login-form" class="stack" hidden>
+        <h1>Sign in</h1>
+        <label>User name<input name="name" autocomplete="username" required></label>
+        <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+        <p class="form-error" role="alert"></p>
+        <button class="btn primary" type="submit">Sign in</button>
+        <p class="hint">Forgot your password? Ask your administrator to reset it.</p>
+      </form>
+
+      <form id="setup-form" class="stack" hidden>
+        <h1>First-time setup</h1>
+        <p class="hint">Name this AI and create the first administrator account.</p>
+        <label>Name shown at the top (your business or family)<input name="company" maxlength="80" required placeholder="Acme Plumbing"></label>
+        <label>Administrator user name<input name="name" autocomplete="username" required pattern="[A-Za-z0-9][A-Za-z0-9._\-]{1,31}"></label>
+        <label>Full name<input name="displayName" autocomplete="name"></label>
+        <label>Password (8 or more characters)<input name="password" type="password" autocomplete="new-password" minlength="8" required></label>
+        <p class="form-error" role="alert"></p>
+        <button class="btn primary" type="submit">Create account</button>
+      </form>
+
+      <div id="setup-remote" hidden>
+        <h1>Almost ready</h1>
+        <p class="hint">First-time setup has to be done on the AI computer itself. Open this page there at <code>http://localhost:<span id="port-hint"></span></code>.</p>
+      </div>
+    </div>
+    <p class="gate-foot">Night Tech Private AI · Set up by Night Tech Solutions · (864) 381-8510</p>
+  </main>
+
+  <!-- The app -->
+  <div id="app" class="app" hidden>
+    <aside class="side" id="side">
+      <div class="side-top">
+        <img src="logo.png" alt="" width="34" height="34">
+        <div class="side-title"><strong id="company"></strong><span>Private AI</span></div>
+        <button class="icon-btn only-mobile" id="close-side" type="button" aria-label="Close menu">&times;</button>
+      </div>
+      <button class="btn primary new-chat" id="new-chat" type="button">+ New chat</button>
+      <nav class="chat-list" id="chat-list" aria-label="Your chats"></nav>
+      <div class="side-bottom">
+        <button class="side-link" id="open-docs" type="button">Document library <span class="count" id="doc-count"></span></button>
+        <button class="side-link" id="open-settings" type="button" hidden>Settings and users</button>
+        <button class="side-link" id="open-account" type="button">My account</button>
+        <p class="side-foot">Night Tech Private AI <span id="version"></span><br>Help: Night Tech Solutions, (864) 381-8510</p>
+      </div>
+    </aside>
+
+    <section class="main">
+      <header class="bar">
+        <button class="icon-btn only-mobile" id="open-side" type="button" aria-label="Open menu">&#9776;</button>
+        <h1 class="bar-title" id="chat-title">New chat</h1>
+        <span class="pill" id="model-pill" title="The AI model answering"></span>
+      </header>
+
+      <div class="messages" id="messages" aria-live="polite">
+        <div class="empty" id="empty">
+          <img src="logo.png" alt="" width="56" height="56">
+          <h2>How can I help?</h2>
+          <p>Everything you type stays on this network. Nothing is sent to an AI company.</p>
+          <div class="examples" id="examples">
+            <button type="button" class="example">Write a friendly email to a customer whose order is running late.</button>
+            <button type="button" class="example">Summarize this text in five bullet points: (paste it here)</button>
+            <button type="button" class="example">Explain the difference between a W-2 and a 1099 in plain English.</button>
+            <button type="button" class="example docs-example" hidden>What does our handbook say about vacation days?</button>
+          </div>
+        </div>
+      </div>
+
+      <form class="composer" id="composer">
+        <label class="docs-toggle" id="docs-toggle" hidden><input type="checkbox" id="use-docs"> Answer from our documents</label>
+        <div class="composer-row">
+          <label class="sr" for="question">Message</label>
+          <textarea id="question" rows="1" placeholder="Ask anything..." maxlength="20000"></textarea>
+          <button class="btn primary" id="send" type="submit">Send</button>
+          <button class="btn" id="stop" type="button" hidden>Stop</button>
+        </div>
+        <p class="composer-hint">AI can be wrong. Check facts, numbers and anything legal, medical or financial. Press Enter to send, Shift+Enter for a new line.</p>
+      </form>
+    </section>
+  </div>
+
+  <!-- Panels -->
+  <dialog id="docs-dialog" class="panel">
+    <div class="panel-head"><h2>Document library</h2><button class="icon-btn" data-close type="button" aria-label="Close">&times;</button></div>
+    <p class="hint">When "Answer from our documents" is on, the AI looks things up in these files and shows which one each answer came from. Everyone can use them; only administrators can add or remove them.</p>
+    <form id="upload-form" class="upload" hidden>
+      <label class="btn">Add documents<input type="file" id="upload-input" multiple accept=".pdf,.docx,.xlsx,.pptx,.txt,.md,.csv,.html,.htm"></label>
+      <span class="hint">PDF, Word, Excel, PowerPoint, text and web pages. Scanned pages without typed text can't be read.</span>
+    </form>
+    <div id="upload-status" class="upload-status" aria-live="polite"></div>
+    <table class="table"><thead><tr><th>Document</th><th>Passages</th><th>Added</th><th></th></tr></thead><tbody id="doc-rows"></tbody></table>
+  </dialog>
+
+  <dialog id="settings-dialog" class="panel wide">
+    <div class="panel-head"><h2>Settings and users</h2><button class="icon-btn" data-close type="button" aria-label="Close">&times;</button></div>
+    <div id="engine-status" class="status-row"></div>
+    <form id="settings-form" class="stack">
+      <h3>This AI</h3>
+      <label>Name shown at the top<input name="companyName" maxlength="80" required></label>
+      <label>AI model<select name="chatModel" id="model-select"></select></label>
+      <label>Conversation memory
+        <select name="contextTokens">
+          <option value="4096">Short (fastest, uses the least memory)</option>
+          <option value="8192">Normal</option>
+          <option value="16384">Long (needs more graphics memory)</option>
+          <option value="32768">Very long (large graphics cards only)</option>
+        </select>
+      </label>
+      <label>Extra instructions for the AI (optional)<textarea name="extraInstructions" rows="3" maxlength="4000" placeholder="For example: We are a plumbing company in Spartanburg, SC. Keep answers short and friendly."></textarea></label>
+      <p class="form-error" role="alert"></p>
+      <button class="btn primary" type="submit">Save settings</button>
+    </form>
+    <h3>People</h3>
+    <table class="table"><thead><tr><th>User</th><th>Name</th><th>Admin</th><th></th></tr></thead><tbody id="user-rows"></tbody></table>
+    <form id="add-user-form" class="inline-form">
+      <input name="name" placeholder="user name" required pattern="[A-Za-z0-9][A-Za-z0-9._\-]{1,31}" aria-label="User name">
+      <input name="displayName" placeholder="full name" aria-label="Full name">
+      <input name="password" type="password" placeholder="password (8+)" minlength="8" required autocomplete="new-password" aria-label="Password">
+      <label class="check"><input type="checkbox" name="isAdmin"> admin</label>
+      <button class="btn primary" type="submit">Add person</button>
+      <p class="form-error" role="alert"></p>
+    </form>
+    <p class="hint" id="data-folder"></p>
+  </dialog>
+
+  <dialog id="account-dialog" class="panel">
+    <div class="panel-head"><h2>My account</h2><button class="icon-btn" data-close type="button" aria-label="Close">&times;</button></div>
+    <p id="account-who"></p>
+    <form id="password-form" class="stack">
+      <h3>Change password</h3>
+      <label>Current password<input name="current" type="password" autocomplete="current-password" required></label>
+      <label>New password (8 or more characters)<input name="password" type="password" autocomplete="new-password" minlength="8" required></label>
+      <p class="form-error" role="alert"></p>
+      <button class="btn primary" type="submit">Change password</button>
+    </form>
+    <button class="btn" id="sign-out" type="button">Sign out</button>
+  </dialog>
+</body>
+</html>
