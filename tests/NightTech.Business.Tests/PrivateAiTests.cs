@@ -375,4 +375,37 @@ public class PrivateAiTests
         fake.Reply = (_, _) => (HttpStatusCode.OK, "{\"status\":\"pulling\"}\n");
         await Assert.ThrowsAsync<OllamaException>(() => client.PullAsync("phi4", null));
     }
+
+    // ---------------- Setup report ----------------
+
+    [Fact]
+    public void Setup_report_round_trips_and_never_holds_a_password()
+    {
+        var r = new AiSetupReport
+        {
+            Ticket = "NT-0042", Customer = "Acme Plumbing", Started = Now, Finished = Now,
+            Hardware = new HardwareProfile("OFFICE-PC", "Intel Core i7", 8, 32, new[] { new GpuInfo("RTX 4070", 12, "NVIDIA") }, 400, "Windows 11"),
+            Model = "gemma4:12b", ModelName = "Gemma 4 (12B) by Google", AdminUser = "owner", Port = 8080,
+            Addresses = new() { "http://office-pc:8080" },
+            Steps = new() { new SetupStep { Name = "Install", Result = StepResult.Done }, new SetupStep { Name = "Firewall", Result = StepResult.Warning, Detail = "Public network" } },
+        };
+        Assert.True(r.Success);
+        var dir = Temp();
+        try
+        {
+            var (json, text) = r.Save(dir);
+            var back = AiSetupReport.FromJson(File.ReadAllText(json))!;
+            Assert.Equal("private-ai-setup", back.Kind);
+            Assert.Equal(12, back.Hardware!.Gpus[0].MemoryGb);
+            Assert.Equal(StepResult.Warning, back.Steps[1].Result);
+            Assert.Contains("NT-0042", Path.GetFileName(json));
+            var t = File.ReadAllText(text);
+            Assert.Contains("Private AI is installed and running.", t);
+            Assert.Contains("[!!] Firewall: Public network", t);
+            Assert.DoesNotContain("password", File.ReadAllText(json).ToLowerInvariant());
+            r.Steps[0].Result = StepResult.Failed;
+            Assert.False(r.Success);
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
 }
