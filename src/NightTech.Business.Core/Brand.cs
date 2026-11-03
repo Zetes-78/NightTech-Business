@@ -7,6 +7,15 @@ public static class Brand
     public const string Website = "https://nighttech.solutions";
     public const string Phone = "(864) 381-8510";
     public const string ServiceArea = "Serving all of the Upstate, SC";
+    public const string PhoneLink = "tel:+18643818510";
+    public const string TextPhone = "(864) 497-2701";
+    public const string Email = "nighttechsolutions1@gmail.com";
+    public const string ContactUrl = "https://nighttech.solutions/contact/";
+    public const string BusinessItUrl = "https://nighttech.solutions/business-it/";
+    public const string SentinelUrl = "https://nighttech.solutions/sentinel/";
+    public const string Hours = "Weeknights 6-11 PM, weekends 9 AM-6 PM, remote help during the day";
+    /// <summary>The quiet scripture line used in Night Tech footers.</summary>
+    public const string Verse = "\u201cWhatever you do, work heartily, as for the Lord.\u201d Colossians 3:23";
 
     // Colors (hex) match the website and printed materials.
     public const string Navy = "#1A365D";
