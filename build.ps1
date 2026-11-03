@@ -28,6 +28,7 @@ function Write-Hash([string]$file) {
 
 $tools = @(
     @{ Name = "Night Tech Security Checkup"; Project = "src\NightTech.SecurityCheckup\NightTech.SecurityCheckup.csproj"; Out = "publish\securitycheckup"; Iss = "installer\NightTechSecurityCheckup.iss"; Setup = "NightTechSecurityCheckup-Setup.exe"; Folder = "Security Checkup" },
+    @{ Name = "Night Tech Network Scan"; Project = "src\NightTech.NetworkScan\NightTech.NetworkScan.csproj"; Out = "publish\networkscan"; Iss = "installer\NightTechNetworkScan.iss"; Setup = "NightTechNetworkScan-Setup.exe"; Folder = "Network Scan" },
     # AI Setup carries the Private AI program it installs, in a "server" folder next to it.
     @{ Name = "Night Tech AI Setup"; Project = "src\NightTech.AiSetup\NightTech.AiSetup.csproj"; Out = "publish\aisetup"; Iss = "installer\NightTechAiSetup.iss"; Setup = "NightTechAiSetup-Setup.exe"; Folder = "AI Setup"; Server = "src\NightTech.PrivateAi\NightTech.PrivateAi.csproj" }
 )

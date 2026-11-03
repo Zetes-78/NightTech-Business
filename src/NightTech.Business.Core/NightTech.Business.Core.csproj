@@ -13,6 +13,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- IEEE device-maker list (public), from the BSD-licensed oui-data package: see Network/oui-LICENSE.txt. -->
+    <EmbeddedResource Include="Network\oui.txt.gz" LogicalName="NightTech.Business.Core.Network.oui.txt.gz" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="NightTech.Business.Tests" />
   </ItemGroup>
 

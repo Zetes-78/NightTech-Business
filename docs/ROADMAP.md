@@ -10,7 +10,7 @@ Tools read what Windows and the business's own systems report; no third-party se
 | Managed IT Plans | **Sentinel**: small read-only agent on client PCs: drive health, disk space, updates, antivirus, backup status; alerts and a monthly client report | 2 |
 | Managed IT Plans | **Hub business module**: business clients, plans, sites, equipment list, monthly report, renewal reminders; Square stays the payment system | 2 |
 | Backup & Recovery Setup | **Backup Buddy** finished for business use, plus backup monitoring in Sentinel | 2 |
-| Network & Wi-Fi Support | **Network documenter**: device discovery, Wi-Fi survey, DHCP/DNS/gateway, open-port summary, network map report (only with the owner's permission) | 3 |
+| Network & Wi-Fi Support | **Network Scan** (network documenter): device discovery and identification, Wi-Fi survey, DHCP/DNS/gateway, services and risks, programs on every Windows PC, report and spreadsheets (only with the owner's permission). **Done: Network Scan 0.1** | 3 |
 | New Computer Setup | **Move kit**: copies user files and browser bookmarks, records installed programs, checklist and handoff report | 3 |
 | Website Care Plans | **Site monitor**: uptime, SSL certificate and domain expiry checks for client sites, monthly report | 3 |
 | Private AI Setup | **Private AI kit**: hardware sizing check, local AI setup script, privacy checklist. **Done: Night Tech Private AI + AI Setup 0.1** | 3 |

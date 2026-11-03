@@ -1,0 +1,196 @@
+<Window x:Class="NightTech.NetworkScan.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Night Tech Network Scan"
+        Width="1220" Height="860" MinWidth="1000" MinHeight="660"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource Page}"
+        Icon="Assets/logo-icon.png"
+        Closing="Window_Closing">
+  <Window.Resources>
+    <Style TargetType="DataGrid">
+      <Setter Property="AutoGenerateColumns" Value="False" />
+      <Setter Property="CanUserAddRows" Value="False" />
+      <Setter Property="HeadersVisibility" Value="Column" />
+      <Setter Property="GridLinesVisibility" Value="Horizontal" />
+      <Setter Property="HorizontalGridLinesBrush" Value="{StaticResource Line}" />
+      <Setter Property="BorderBrush" Value="{StaticResource Line}" />
+      <Setter Property="Background" Value="White" />
+    </Style>
+    <Style TargetType="TabItem">
+      <Setter Property="Padding" Value="16,8" />
+      <Setter Property="FontSize" Value="14" />
+    </Style>
+  </Window.Resources>
+  <DockPanel>
+    <Border DockPanel.Dock="Top" Background="{StaticResource Navy}" Padding="20,14">
+      <DockPanel>
+        <Border DockPanel.Dock="Left" Background="White" CornerRadius="8" Padding="4" Margin="0,0,14,0">
+          <Image Source="Assets/logo-icon.png" Width="40" Height="40" />
+        </Border>
+        <TextBlock DockPanel.Dock="Right" x:Name="VersionText" Foreground="#A9BFD9" VerticalAlignment="Center" />
+        <StackPanel VerticalAlignment="Center">
+          <TextBlock Text="Night Tech Network Scan" Foreground="White" FontSize="20" FontWeight="SemiBold" />
+          <TextBlock Text="Every device on the network, the Wi-Fi, and the programs on each Windows PC, in one report for the owner. Look only: nothing is changed."
+                     Foreground="#DBE7F5" FontSize="13" />
+        </StackPanel>
+      </DockPanel>
+    </Border>
+
+    <Border DockPanel.Dock="Bottom" Background="White" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Padding="16,8">
+      <DockPanel>
+        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,4">
+          <Button DockPanel.Dock="Right" x:Name="StopButton" Content="Stop" Style="{StaticResource PlainButton}" Click="Stop_Click" IsEnabled="False" />
+          <TextBlock x:Name="BusyText" FontWeight="SemiBold" VerticalAlignment="Center" Text="Ready" />
+        </DockPanel>
+        <ProgressBar DockPanel.Dock="Top" x:Name="Busy" Height="6" Margin="0,0,0,6" Foreground="{StaticResource Orange}" Maximum="1" />
+        <ListBox x:Name="LogList" Height="80" BorderThickness="0" FontFamily="Consolas" FontSize="12" />
+      </DockPanel>
+    </Border>
+
+    <TabControl x:Name="Tabs" Margin="16,12" Background="{StaticResource Page}" BorderThickness="0">
+
+      <TabItem Header="1. Scan">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+          <Grid Margin="0,12,0,0">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="1*" /><ColumnDefinition Width="16" /><ColumnDefinition Width="1*" /></Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0">
+              <Border Style="{StaticResource Card}">
+                <Grid>
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="150" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                  <Grid.RowDefinitions><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /></Grid.RowDefinitions>
+                  <TextBlock Grid.ColumnSpan="2" Text="Job" Style="{StaticResource SectionTitle}" />
+                  <TextBlock Grid.Row="1" Text="Business" VerticalAlignment="Center" />
+                  <TextBox Grid.Row="1" Grid.Column="1" x:Name="BusinessBox" Margin="0,4" />
+                  <TextBlock Grid.Row="2" Text="Site / location" VerticalAlignment="Center" />
+                  <TextBox Grid.Row="2" Grid.Column="1" x:Name="SiteBox" Margin="0,4" />
+                  <TextBlock Grid.Row="3" Text="Hub ticket #" VerticalAlignment="Center" />
+                  <TextBox Grid.Row="3" Grid.Column="1" x:Name="TicketBox" Margin="0,4" />
+                  <TextBlock Grid.Row="4" Text="Technician" VerticalAlignment="Center" />
+                  <TextBox Grid.Row="4" Grid.Column="1" x:Name="TechBox" Margin="0,4" />
+                  <TextBlock Grid.Row="5" Text="Permission given by" VerticalAlignment="Center" />
+                  <TextBox Grid.Row="5" Grid.Column="1" x:Name="PermissionBox" Margin="0,4" ToolTip="The owner or manager who said you may scan this network" />
+                </Grid>
+              </Border>
+              <Border Style="{StaticResource Card}" BorderBrush="{StaticResource Orange}" Background="{StaticResource OrangeSoft}">
+                <StackPanel>
+                  <TextBlock Text="Scan the network" Style="{StaticResource SectionTitle}" />
+                  <CheckBox x:Name="PermissionCheck" Content="The owner or manager has given permission to scan this network." FontWeight="SemiBold" />
+                  <TextBlock TextWrapping="Wrap" Margin="0,6,0,10" Foreground="{StaticResource Muted}"
+                             Text="Only scan networks you've been asked to check. The scan pings each address, knocks on common ports and reads devices' own front pages: it never logs in or changes anything. A /24 network takes 1 to 3 minutes." />
+                  <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Network" VerticalAlignment="Center" Width="70" />
+                    <ComboBox x:Name="AdapterBox" Width="420" DisplayMemberPath="Name" />
+                  </StackPanel>
+                  <Button x:Name="ScanButton" Content="Scan this network" Style="{StaticResource PrimaryButton}" Click="Scan_Click" Margin="0,12,0,0" HorizontalAlignment="Left" />
+                </StackPanel>
+              </Border>
+            </StackPanel>
+            <StackPanel Grid.Column="2">
+              <Border Style="{StaticResource Card}">
+                <StackPanel>
+                  <TextBlock Text="This network" Style="{StaticResource SectionTitle}" />
+                  <TextBlock x:Name="NetText" TextWrapping="Wrap" LineHeight="20" Text="-" />
+                </StackPanel>
+              </Border>
+              <Border Style="{StaticResource Card}">
+                <StackPanel>
+                  <TextBlock Text="Found so far" Style="{StaticResource SectionTitle}" />
+                  <TextBlock x:Name="SummaryText" TextWrapping="Wrap" LineHeight="20" Text="Nothing scanned yet." />
+                </StackPanel>
+              </Border>
+            </StackPanel>
+          </Grid>
+        </ScrollViewer>
+      </TabItem>
+
+      <TabItem Header="2. Devices">
+        <DockPanel Margin="0,12,0,0">
+          <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,8" Foreground="{StaticResource Muted}"
+                     Text="Type a label for anything the owner names (&quot;Front desk printer&quot;). Labels go in the report. Unknown devices are worth asking about." />
+          <DataGrid x:Name="DeviceGrid" CanUserSortColumns="True">
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="Address" Binding="{Binding Ip, Mode=OneWay}" Width="110" />
+              <DataGridTextColumn Header="Type" Binding="{Binding Type, Mode=OneWay}" Width="190" />
+              <DataGridTextColumn Header="Label (owner's name)" Binding="{Binding Label, UpdateSourceTrigger=PropertyChanged}" Width="170" />
+              <DataGridTextColumn Header="Name" Binding="{Binding Name, Mode=OneWay}" Width="140" />
+              <DataGridTextColumn Header="Maker / model" Binding="{Binding Maker, Mode=OneWay}" Width="190" />
+              <DataGridTextColumn Header="MAC" Binding="{Binding Mac, Mode=OneWay}" Width="130" />
+              <DataGridTextColumn Header="Services" Binding="{Binding Services, Mode=OneWay}" Width="*" />
+            </DataGrid.Columns>
+          </DataGrid>
+        </DockPanel>
+      </TabItem>
+
+      <TabItem Header="3. Wi-Fi">
+        <DockPanel Margin="0,12,0,0">
+          <TextBlock DockPanel.Dock="Top" x:Name="WifiText" TextWrapping="Wrap" Margin="0,0,0,8" />
+          <DataGrid x:Name="WifiGrid" IsReadOnly="True">
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="Network (SSID)" Binding="{Binding Ssid}" Width="220" />
+              <DataGridTextColumn Header="Signal %" Binding="{Binding SignalPercent}" Width="80" />
+              <DataGridTextColumn Header="Channel" Binding="{Binding Channel}" Width="80" />
+              <DataGridTextColumn Header="Band" Binding="{Binding Band}" Width="90" />
+              <DataGridTextColumn Header="Security" Binding="{Binding Security}" Width="180" />
+              <DataGridTextColumn Header="Access point (BSSID)" Binding="{Binding Bssid}" Width="*" />
+            </DataGrid.Columns>
+          </DataGrid>
+        </DockPanel>
+      </TabItem>
+
+      <TabItem Header="4. Programs">
+        <DockPanel Margin="0,12,0,0">
+          <Border DockPanel.Dock="Top" Style="{StaticResource Card}">
+            <StackPanel>
+              <TextBlock Text="Programs on the Windows PCs" Style="{StaticResource SectionTitle}" />
+              <TextBlock TextWrapping="Wrap" Margin="0,0,0,10" Foreground="{StaticResource Muted}"
+                         Text="This PC is read automatically. For the others: if you're signed in with an account that's an administrator on them (most office networks with a server), read them over the network. Otherwise, run this program on each PC and click 'Save this PC's programs to a file' there, or bring the Field Kit report, then import the files here." />
+              <WrapPanel>
+                <Button Content="Read Windows PCs over the network" Style="{StaticResource PlainButton}" Click="ReadRemote_Click" Margin="0,0,10,6" />
+                <Button Content="Import files from other PCs..." Style="{StaticResource PlainButton}" Click="Import_Click" Margin="0,0,10,6" />
+                <Button Content="Save this PC's programs to a file..." Style="{StaticResource PlainButton}" Click="SaveInventory_Click" Margin="0,0,10,6" />
+              </WrapPanel>
+              <TextBlock x:Name="PcText" TextWrapping="Wrap" Margin="0,6,0,0" />
+            </StackPanel>
+          </Border>
+          <DataGrid x:Name="SoftwareGrid" IsReadOnly="True" CanUserSortColumns="True">
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="Program" Binding="{Binding Name}" Width="300" />
+              <DataGridTextColumn Header="PCs" Binding="{Binding Count}" Width="50" />
+              <DataGridTextColumn Header="Version(s)" Binding="{Binding Versions}" Width="160" />
+              <DataGridTextColumn Header="Note" Binding="{Binding Flag}" Width="*" />
+              <DataGridTextColumn Header="Computers" Binding="{Binding Computers}" Width="220" />
+            </DataGrid.Columns>
+          </DataGrid>
+        </DockPanel>
+      </TabItem>
+
+      <TabItem Header="5. Report">
+        <DockPanel Margin="0,12,0,0">
+          <Border DockPanel.Dock="Bottom" Style="{StaticResource Card}" Margin="0,12,0,0">
+            <StackPanel>
+              <TextBlock Text="Notes for the owner (optional)" Margin="0,0,0,4" />
+              <TextBox x:Name="NotesBox" Height="60" TextWrapping="Wrap" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" />
+              <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                <Button Content="Save and open the report" Style="{StaticResource PrimaryButton}" Click="Save_Click" Margin="0,0,10,0" />
+                <Button Content="Open the reports folder" Style="{StaticResource PlainButton}" Click="OpenReports_Click" />
+              </StackPanel>
+              <TextBlock x:Name="SavedText" Foreground="{StaticResource Muted}" Margin="0,8,0,0" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+          <TextBlock DockPanel.Dock="Top" Text="What to look at" Style="{StaticResource SectionTitle}" />
+          <ListBox x:Name="FindingList" BorderBrush="{StaticResource Line}">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <DockPanel Margin="0,4" MaxWidth="1100">
+                  <TextBlock DockPanel.Dock="Left" Text="{Binding Mark}" Foreground="{Binding Color}" FontWeight="Bold" Width="56" />
+                  <TextBlock TextWrapping="Wrap"><Run Text="{Binding Title, Mode=OneWay}" FontWeight="SemiBold" /><LineBreak /><Run Text="{Binding Detail, Mode=OneWay}" Foreground="#4A5568" /></TextBlock>
+                </DockPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </DockPanel>
+      </TabItem>
+    </TabControl>
+  </DockPanel>
+</Window>

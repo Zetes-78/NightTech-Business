@@ -15,6 +15,19 @@ SECURITY CHECKUP
 6. After checking every computer: "Business summary" combines them into one page for the owner.
 Attach the .txt reports to the Hub ticket.
 
+NETWORK SCAN (network documenter)
+Only scan a network the owner or manager has said you may check.
+1. On a computer connected to the business network, open "Network Scan\NightTechNetworkScan.exe".
+2. Enter the business, site, Hub ticket, your name and who gave permission. Tick the permission box and click
+   "Scan this network" (1 to 3 minutes). It pings, knocks on common ports and reads devices' own front pages.
+   It never logs in or changes anything.
+3. Devices tab: label what the owner names ("Front desk printer") and ask about anything Unknown.
+4. Programs tab: this PC is read automatically. "Read Windows PCs over the network" works where your signed-in
+   account is an administrator on them. Otherwise run Network Scan on each PC, click "Save this PC's programs to
+   a file", and import those files (Field Kit reports work too).
+5. Report tab: "Save and open the report". The .html is for the owner, the .csv spreadsheets list every device and
+   program, and the .json goes on the Hub ticket.
+
 AI SETUP (Private AI)
 1. On the computer that will run the customer's AI, open "AI Setup\NightTechAiSetup.exe" and click Yes to the
    administrator prompt. It checks the computer and recommends an AI model.
