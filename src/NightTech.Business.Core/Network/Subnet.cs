@@ -24,7 +24,7 @@ public static class Subnet
         var hosts = new List<IPAddress>();
         if (prefix >= 31) { hosts.Add(local); return (hosts, $"{FromUInt(net)}/{prefix}"); }
         for (uint a = net + 1; a < bcast && hosts.Count < MaxHosts; a++) hosts.Add(FromUInt(a));
-        if (gateway is not null && (ToUInt(gateway) & mask) != net) hosts.Add(gateway); // gateway outside the range: scan it too
+        if (gateway is not null && IsPrivate(gateway) && (ToUInt(gateway) & mask) != net) hosts.Add(gateway); // a local gateway outside the range: scan it too
         return (hosts, $"{FromUInt(net)}/{prefix}");
     }
 
@@ -119,11 +119,14 @@ public static class Parse
     /// <summary>The connected Wi-Fi from "netsh wlan show interfaces" (English Windows).</summary>
     public static WifiNetwork? WlanInterface(string text)
     {
-        if (string.IsNullOrWhiteSpace(text) || !Field(text, "State").StartsWith("connected", StringComparison.OrdinalIgnoreCase)) return null;
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var state = Field(text, "State");
+        // Non-English Windows translates "State"; fall back to "has an SSID and an access point".
+        if (state.Length > 0 ? !state.StartsWith("connected", StringComparison.OrdinalIgnoreCase) : Field(text, "SSID").Length == 0 || Field(text, "BSSID").Length == 0 && Field(text, "AP BSSID").Length == 0) return null;
         var ch = Int(Field(text, "Channel"));
         return new WifiNetwork
         {
-            Ssid = Field(text, "SSID"), Bssid = Oui.Normalize(Field(text, "BSSID")), SignalPercent = Int(Field(text, "Signal")),
+            Ssid = Field(text, "SSID"), Bssid = Oui.Normalize(Field(text, "BSSID") is { Length: > 0 } bs ? bs : Field(text, "AP BSSID")), SignalPercent = Int(Field(text, "Signal")),
             Channel = ch, Band = Band(ch, Field(text, "Band")), Security = Field(text, "Authentication"), Connected = true,
         };
     }
@@ -137,7 +140,7 @@ public static class Parse
         {
             var ssid = block.Split('\n')[0].Trim();
             var auth = Field(block, "Authentication");
-            foreach (var b in Regex.Split(block, @"^\s*BSSID \d+\s*:", RegexOptions.Multiline).Skip(1))
+            foreach (var b in Regex.Split(block, @"^\s*(?:AP )?BSSID \d+\s*:", RegexOptions.Multiline).Skip(1))
             {
                 var bssid = Oui.Normalize(b.Split('\n')[0]);
                 var ch = Int(Field(b, "Channel"));
@@ -161,11 +164,19 @@ public static class Parse
     /// <summary>The NetBIOS computer name from a node status reply (UDP 137), or "".</summary>
     public static string NetBiosName(byte[] reply)
     {
-        // Header 12 bytes, question name 34 + type/class 4, then answer: name(2 ptr or 34) type class ttl rdlength, then count + 18-byte entries.
-        if (reply.Length < 57) return "";
-        int i = 12 + 34 + 4;           // our query is echoed
-        if (reply[i] == 0xC0) i += 2; else i += 34;
-        i += 2 + 2 + 4 + 2;            // type, class, ttl, rdlength
+        // RFC 1002 4.2.18: 12-byte header (no question echoed, QDCOUNT 0), then the answer: RR name, type, class, TTL,
+        // length, then the number of names and 18-byte entries (15 name + suffix + 2 flag bytes).
+        if (reply.Length < 12 + 2 + 10 + 1) return "";
+        int i = 12;
+        int questions = reply[4] << 8 | reply[5];
+        for (int q = 0; q <= questions; q++)   // skip any echoed question(s), then the answer's own name
+        {
+            if (i >= reply.Length) return "";
+            if ((reply[i] & 0xC0) == 0xC0) i += 2;
+            else { while (i < reply.Length && reply[i] != 0) i += reply[i] + 1; i++; }
+            if (q < questions) i += 4;          // a question's type and class
+        }
+        i += 2 + 2 + 4 + 2;                     // type, class, TTL, length
         if (i >= reply.Length) return "";
         int count = reply[i++];
         for (int n = 0; n < count && i + 18 <= reply.Length; n++, i += 18)
@@ -190,6 +201,12 @@ public static class Parse
         q[46] = 0; q[47] = 0x21;        // NBSTAT
         q[48] = 0; q[49] = 1;           // IN
         return q;
+    }
+
+    public static string Header(string reply, string name)
+    {
+        var m = Regex.Match(reply ?? "", @"^" + Regex.Escape(name) + @":\s*(.+?)\s*$", RegexOptions.Multiline | RegexOptions.IgnoreCase);
+        return m.Success ? m.Groups[1].Value : "";
     }
 
     /// <summary>SSDP replies: the LOCATION and SERVER headers.</summary>

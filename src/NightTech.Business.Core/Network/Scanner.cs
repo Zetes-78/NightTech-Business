@@ -21,7 +21,7 @@ public sealed class Scanner
         (445, "Windows file sharing"), (515, "Printer (LPD)"), (548, "Mac file sharing"), (554, "Video stream (RTSP)"),
         (631, "Printer (IPP)"), (1433, "SQL Server database"), (3306, "MySQL database"), (3389, "Remote Desktop"),
         (5000, "Web admin / NAS"), (5001, "Secure web admin / NAS"), (5060, "VoIP phone (SIP)"), (5357, "Windows device discovery"),
-        (5900, "VNC remote control"), (5938, "TeamViewer"), (7070, "AnyDesk"), (8000, "Web admin / camera"),
+        (5900, "VNC remote control"), (5938, "TeamViewer"), (7000, "AirPlay"), (7070, "AnyDesk"), (8000, "Web admin / camera"),
         (8008, "Chromecast / Google device"), (8060, "Roku"), (8080, "Web admin"), (8443, "Secure web admin"),
         (9100, "Printer (direct print)"), (37777, "Camera recorder (Dahua)"), (62078, "iPhone/iPad sync"),
     };
@@ -103,13 +103,19 @@ public sealed class Scanner
                 d.Name = await NameAsync(ip, ct);
                 foreach (var s in d.Services.Where(s => s.Port is 80 or 8080 or 443 or 8443 or 5000 or 5001 or 8000))
                     s.Detail = await TitleAsync(ip, s.Port, ct);
-                if (ssdp.TryGetValue(d.Ip, out var loc))
+                if (ssdp.TryGetValue(d.Ip, out var ad))
                 {
-                    var (friendly, maker, model, type) = await UpnpAsync(loc, ip, ct);
-                    if (model.Length > 0) d.Model = (maker.Length > 0 && !model.StartsWith(maker, StringComparison.OrdinalIgnoreCase) ? maker + " " : "") + model;
-                    if (friendly.Length > 0 && d.Name.Length == 0) d.Name = friendly;
-                    if (type.Length > 0) d.Notes.Add("UPnP: " + type.Replace("urn:schemas-upnp-org:device:", ""));
-                    d.Upnp = true;
+                    d.UpnpTypes.AddRange(ad.Types);
+                    // Port forwarding by UPnP is only on when the router announces itself as an internet gateway (not just a media server).
+                    d.Upnp = ad.Types.Any(t => t.Contains("InternetGatewayDevice", StringComparison.OrdinalIgnoreCase) || t.Contains("WANIPConnection", StringComparison.OrdinalIgnoreCase) || t.Contains("WANPPPConnection", StringComparison.OrdinalIgnoreCase));
+                    foreach (var loc in ad.Locations.Take(3))
+                    {
+                        var (friendly, maker, model, type) = await UpnpAsync(loc, ip, ct);
+                        if (model.Length > 0 && d.Model.Length == 0) d.Model = Clean((maker.Length > 0 && !model.StartsWith(maker, StringComparison.OrdinalIgnoreCase) ? maker + " " : "") + model);
+                        if (friendly.Length > 0 && d.Name.Length == 0) d.Name = Clean(friendly);
+                        if (type.Length > 0 && !d.UpnpTypes.Contains(type)) d.UpnpTypes.Add(type);
+                    }
+                    if (d.UpnpTypes.Any(t => t.Contains("InternetGatewayDevice", StringComparison.OrdinalIgnoreCase))) d.Upnp = true;
                 }
                 if (d.Mac.Length > 0) { d.RandomMac = Oui.IsRandom(d.Mac); d.Maker = Oui.Maker(d.Mac); }
             }
@@ -133,16 +139,31 @@ public sealed class Scanner
         catch (SocketException) { return false; }
     }
 
+    /// <summary>Names from the network can contain anything: keep printable characters only, and a sensible length.</summary>
+    internal static string Clean(string s) => new string((s ?? "").Where(c => !char.IsControl(c)).Take(80).ToArray()).Trim();
+
     private static async Task<string> NameAsync(IPAddress ip, CancellationToken ct)
     {
+        // Windows PCs answer NetBIOS (local, quick) first; then reverse DNS, given at most 2 seconds.
+        var nb = await NetBiosAsync(ip, ct);
+        if (nb.Length > 0) return nb;
         try
         {
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(TimeSpan.FromSeconds(2));
-            var e = await Dns.GetHostEntryAsync(ip.ToString(), cts.Token);
-            if (!string.IsNullOrWhiteSpace(e.HostName) && e.HostName != ip.ToString()) return e.HostName.Split('.')[0];
+            var lookup = Dns.GetHostEntryAsync(ip.ToString());
+            if (await Task.WhenAny(lookup, Task.Delay(2000, ct)) == lookup)
+            {
+                var e = await lookup;
+                if (!string.IsNullOrWhiteSpace(e.HostName) && e.HostName != ip.ToString()) return Clean(e.HostName.Split('.')[0]);
+            }
+            else _ = lookup.ContinueWith(t => _ = t.Exception, TaskScheduler.Default); // abandoned: observe its error later
         }
-        catch (Exception x) when (x is SocketException or OperationCanceledException or ArgumentException) { if (ct.IsCancellationRequested) throw; }
+        catch (Exception x) when (x is SocketException or ArgumentException) { }
+        ct.ThrowIfCancellationRequested();
+        return "";
+    }
+
+    private static async Task<string> NetBiosAsync(IPAddress ip, CancellationToken ct)
+    {
         try
         {
             using var u = new UdpClient();
@@ -152,7 +173,7 @@ public sealed class Scanner
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeSpan.FromMilliseconds(900));
             var r = await u.ReceiveAsync(cts.Token);
-            if (r.RemoteEndPoint.Address.Equals(ip)) return Parse.NetBiosName(r.Buffer);
+            if (r.RemoteEndPoint.Address.Equals(ip)) return Clean(Parse.NetBiosName(r.Buffer));
         }
         catch (Exception x) when (x is SocketException or OperationCanceledException) { if (ct.IsCancellationRequested) throw; }
         return "";
@@ -161,6 +182,7 @@ public sealed class Scanner
     private static HttpClient Http(bool acceptAnyCertificate) => new(new SocketsHttpHandler
     {
         AllowAutoRedirect = false,
+        UseProxy = false,   // straight to the device: never through the office's proxy or a WPAD-announced one
         ConnectTimeout = TimeSpan.FromSeconds(2),
         // Only to read a device's own login page title on the local network (most use self-signed certificates). Nothing is sent.
         SslOptions = { RemoteCertificateValidationCallback = acceptAnyCertificate ? (_, _, _, _) => true : null },
@@ -171,19 +193,22 @@ public sealed class Scanner
     private static async Task<string> TitleAsync(IPAddress ip, int port, CancellationToken ct)
     {
         bool tls = port is 443 or 8443 or 5001;
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        limit.CancelAfter(TimeSpan.FromSeconds(4));   // the whole request, body included: a device that stalls can't hold up the scan
+        var lt = limit.Token;
         try
         {
             using var req = new HttpRequestMessage(HttpMethod.Get, $"{(tls ? "https" : "http")}://{ip}:{port}/");
             req.Headers.UserAgent.ParseAdd("NightTechNetworkScan/1.0");
-            using var resp = await (tls ? Tls : Plain).SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+            using var resp = await (tls ? Tls : Plain).SendAsync(req, HttpCompletionOption.ResponseHeadersRead, lt);
             var server = resp.Headers.Server.ToString();
-            if ((int)resp.StatusCode is >= 300 and < 400) return "redirects to its login page" + (server.Length > 0 ? $" ({server})" : "");
-            await using var s = await resp.Content.ReadAsStreamAsync(ct);
+            if ((int)resp.StatusCode is >= 300 and < 400) return Clean("redirects to its login page" + (server.Length > 0 ? $" ({server})" : ""));
+            await using var s = await resp.Content.ReadAsStreamAsync(lt);
             var buf = new byte[32 * 1024];
             int n = 0, r;
-            while (n < buf.Length && (r = await s.ReadAsync(buf.AsMemory(n), ct)) > 0) n += r;
+            while (n < buf.Length && (r = await s.ReadAsync(buf.AsMemory(n), lt)) > 0) n += r;
             var title = Parse.Title(Encoding.UTF8.GetString(buf, 0, n));
-            return title.Length > 0 ? title : server;
+            return Clean(title.Length > 0 ? title : server);
         }
         catch (Exception x) when (x is HttpRequestException or TaskCanceledException or IOException or OperationCanceledException or System.Security.Authentication.AuthenticationException)
         {
@@ -193,9 +218,11 @@ public sealed class Scanner
     }
 
     /// <summary>UPnP discovery: asks everything on the network to describe itself (one multicast message), for 3 seconds.</summary>
-    private static async Task<Dictionary<string, string>> SsdpAsync(CancellationToken ct)
+    private sealed record Announce(List<string> Locations, List<string> Types);
+
+    private static async Task<Dictionary<string, Announce>> SsdpAsync(CancellationToken ct)
     {
-        var map = new Dictionary<string, string>();
+        var map = new Dictionary<string, Announce>();
         try
         {
             using var u = new UdpClient(AddressFamily.InterNetwork);
@@ -206,9 +233,13 @@ public sealed class Scanner
             while (!cts.IsCancellationRequested)
             {
                 var r = await u.ReceiveAsync(cts.Token);
-                var (loc, _) = Parse.Ssdp(Encoding.ASCII.GetString(r.Buffer));
+                var text = Encoding.ASCII.GetString(r.Buffer);
+                var (loc, _) = Parse.Ssdp(text);
+                var st = Parse.Header(text, "ST") is { Length: > 0 } x ? x : Parse.Header(text, "NT");
                 var ip = r.RemoteEndPoint.Address.ToString();
-                if (loc.Length > 0 && !map.ContainsKey(ip)) map[ip] = loc;
+                if (!map.TryGetValue(ip, out var a)) map[ip] = a = new Announce(new(), new());
+                if (loc.Length > 0 && !a.Locations.Contains(loc) && a.Locations.Count < 10) a.Locations.Add(loc);
+                if (st.Length > 0 && !a.Types.Contains(st) && a.Types.Count < 30) a.Types.Add(st);
             }
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
@@ -220,13 +251,16 @@ public sealed class Scanner
     {
         // Only follow the description link if it points back at the same device (never anywhere else).
         if (!Uri.TryCreate(location, UriKind.Absolute, out var u) || u.Scheme != "http" || u.Host != ip.ToString()) return ("", "", "", "");
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        limit.CancelAfter(TimeSpan.FromSeconds(4));
+        var lt = limit.Token;
         try
         {
-            using var resp = await Plain.GetAsync(u, HttpCompletionOption.ResponseHeadersRead, ct);
-            await using var s = await resp.Content.ReadAsStreamAsync(ct);
+            using var resp = await Plain.GetAsync(u, HttpCompletionOption.ResponseHeadersRead, lt);
+            await using var s = await resp.Content.ReadAsStreamAsync(lt);
             var buf = new byte[64 * 1024];
             int n = 0, r;
-            while (n < buf.Length && (r = await s.ReadAsync(buf.AsMemory(n), ct)) > 0) n += r;
+            while (n < buf.Length && (r = await s.ReadAsync(buf.AsMemory(n), lt)) > 0) n += r;
             return Parse.Upnp(Encoding.UTF8.GetString(buf, 0, n));
         }
         catch (Exception x) when (x is HttpRequestException or TaskCanceledException or IOException or OperationCanceledException)

@@ -104,20 +104,25 @@ public class NetworkTests
     }
 
     [Fact]
-    public void NetBios_query_and_reply_round_trip()
+    public void NetBios_query_and_reply_are_read_as_RFC_1002_says()
     {
         var q = Parse.NetBiosQuery(0x1234);
         Assert.Equal(50, q.Length);
-        // Build a reply: our question echoed, a name pointer, type/class/ttl/len, 2 names.
-        var reply = new List<byte>(q);
-        reply[2] = 0x84; reply[7] = 1;
-        reply.AddRange(new byte[] { 0xC0, 0x0C, 0, 0x21, 0, 1, 0, 0, 0, 0, 0, 37 });
+        // A real node status reply: header (QDCOUNT 0, ANCOUNT 1), the answer's name in full, type/class/TTL/length, names.
+        var reply = new List<byte> { 0x12, 0x34, 0x84, 0x00, 0, 0, 0, 1, 0, 0, 0, 0 };
+        reply.AddRange(q.Skip(12).Take(34));                    // RR name (same encoded "*" as the query)
+        reply.AddRange(new byte[] { 0, 0x21, 0, 1, 0, 0, 0, 0, 0, 37 });
         reply.Add(2);
         void Name(string n, byte suffix, byte flags) { reply.AddRange(System.Text.Encoding.ASCII.GetBytes(n.PadRight(15))); reply.Add(suffix); reply.Add(flags); reply.Add(0); }
         Name("WORKGROUP", 0x00, 0x80);      // group name: skipped
         Name("FRONT-DESK", 0x00, 0x04);
         Assert.Equal("FRONT-DESK", Parse.NetBiosName(reply.ToArray()));
         Assert.Equal("", Parse.NetBiosName(new byte[10]));
+
+        // Some stacks send a compressed name pointer instead.
+        var ptr = new List<byte> { 0x12, 0x34, 0x84, 0x00, 0, 0, 0, 1, 0, 0, 0, 0, 0xC0, 0x0C, 0, 0x21, 0, 1, 0, 0, 0, 0, 0, 19, 1 };
+        ptr.AddRange(System.Text.Encoding.ASCII.GetBytes("OFFICE-PC".PadRight(15))); ptr.AddRange(new byte[] { 0, 0x04, 0 });
+        Assert.Equal("OFFICE-PC", Parse.NetBiosName(ptr.ToArray()));
     }
 
     private static Device D(string ip, string maker = "", params int[] ports)
@@ -143,7 +148,7 @@ public class NetworkTests
         Assert.Equal(DeviceKind.SmartHome, D("10", "Espressif").Kind);
         Assert.Equal(DeviceKind.Unknown, D("11").Kind);
         var phone = new Device { Ip = "12", RandomMac = true }; Classify.Apply(phone);
-        Assert.Equal(DeviceKind.Phone, phone.Kind);
+        Assert.Equal(DeviceKind.PrivateAddress, phone.Kind);
         var gw = new Device { Ip = "1.1", IsGateway = true, Maker = "Netgear" }; Classify.Apply(gw);
         Assert.Equal(DeviceKind.Router, gw.Kind);
     }
@@ -233,5 +238,57 @@ public class NetworkTests
             Assert.True(d.Has(9100));
         }
         finally { l.Stop(); }
+    }
+
+    [Fact]
+    public void Classification_avoids_the_embarrassing_mistakes()
+    {
+        var jonas = D("1", "Dell", 135, 445); jonas.Name = "JONAS-PC"; Classify.Apply(jonas);
+        Assert.Equal(DeviceKind.WindowsPc, jonas.Kind);                           // "NAS" inside a name isn't a NAS
+        Assert.NotEqual(DeviceKind.SmartHome, D("2", "Precision Engineering").Kind);  // "Ring" inside a word
+        Assert.NotEqual(DeviceKind.PosTerminal, D("3", "Square D").Kind);
+        Assert.Equal(DeviceKind.PosTerminal, D("3b", "Square").Kind);
+        Assert.NotEqual(DeviceKind.NetworkGear, D("4", "Harris", 80).Kind);
+        Assert.Equal(DeviceKind.AppleDevice, D("5", "Apple", 5000, 7000).Kind);     // AirPlay Mac / Apple TV, not a phone
+        Assert.Equal(DeviceKind.Nas, D("6", "Synology", 5000, 445, 631).Kind);     // NAS with print server stays a NAS
+        Assert.Equal(DeviceKind.LinuxDevice, D("7", "Raspberry Pi Trading", 22, 139, 445).Kind);
+        Assert.Equal(DeviceKind.Computer, D("8", "Dell").Kind);                     // firewall on
+        var lap = new Device { Ip = "9", RandomMac = true }; Classify.Apply(lap);
+        Assert.Equal(DeviceKind.PrivateAddress, lap.Kind);
+        Assert.Equal(new[] { "192.168.1.254" }.Length, Subnet.Hosts(IPAddress.Parse("192.168.1.5"), 24, IPAddress.Parse("8.8.8.8")).Hosts.Count(h => h.ToString() == "8.8.8.8") + 1);
+    }
+
+    [Fact]
+    public void Software_flags_only_the_pcs_that_need_it()
+    {
+        var pcs = new List<PcInventory>
+        {
+            new() { Computer = "A", Windows = "Windows 10 IoT Enterprise LTSC", Programs = { new() { Name = "Python 3.12.1" }, new() { Name = "WinRAR 7.13 (64-bit)", Version = "7.13.0" }, new() { Name = "Bitdefender Total Security" }, new() { Name = "Bitdefender Agent" }, new() { Name = "Microsoft 365 - en-us" } } },
+            new() { Computer = "B", Windows = "Windows 11 Pro", Programs = { new() { Name = "Python 2.7.18" }, new() { Name = "WinRAR 6.02 (64-bit)", Version = "6.02.0" }, new() { Name = "Microsoft Office Shared 64-bit MUI (English) 2016" }, new() { Name = "Microsoft Office Professional Plus 2021" }, new() { Name = "Microsoft 365 - es-es" } } },
+        };
+        var all = Software.Summarize(pcs);
+        var f = Software.Findings(pcs, all);
+        var py = f.Single(x => x.Title.StartsWith("Python"));
+        Assert.False(py.Detail.Split(", ").Select(x => x.Trim('.')).Contains("A"));
+        Assert.Contains(f, x => x.Title.StartsWith("WinRAR") && x.Detail.Contains("B") && !x.Detail.Contains("A,"));
+        Assert.Contains(f, x => x.Title.Contains("Office Professional Plus 2021"));
+        Assert.DoesNotContain(f, x => x.Title.Contains("Shared"));
+        Assert.DoesNotContain(f, x => x.Title.Contains("antivirus"));        // one maker
+        Assert.DoesNotContain(f, x => x.Title.Contains("Windows 10"));       // LTSC is still supported
+        Assert.Equal(1, all.Count(s => s.Name == "Microsoft 365"));
+    }
+
+    [Fact]
+    public void Hostile_import_files_are_refused_or_cleaned()
+    {
+        Assert.Throws<InvalidDataException>(() => NetworkReport.InventoryFromJson("[]"));
+        var pc = NetworkReport.InventoryFromJson("""{"computer":"x","programs":null}""")!;
+        Assert.Empty(pc.Programs);
+        var pc2 = NetworkReport.InventoryFromJson("""{"computer":"y","programs":[null,{"name":"Zoom","version":null}]}""")!;
+        Assert.Equal(1, pc2.Programs.Count);
+        Assert.Equal("", pc2.Programs[0].Version);
+        var r = new NetworkReport { Computers = { pc, pc2 } };
+        r.Evaluate();                                                        // doesn't throw
+        Assert.Contains("\"a\rb\"", new NetworkReport { Devices = { new Device { Ip = "1", Name = "a\rb" } } }.DevicesCsv());
     }
 }

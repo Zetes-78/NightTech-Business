@@ -6,7 +6,7 @@ namespace NightTech.Business.Core.Network;
 public enum DeviceKind
 {
     Unknown, Router, NetworkGear, WindowsPc, Mac, LinuxDevice, Server, Printer, Nas, Camera, Phone, Tablet, TvOrStreamer,
-    SmartHome, VoipPhone, PosTerminal, GameConsole, ThisPc,
+    SmartHome, VoipPhone, PosTerminal, GameConsole, ThisPc, AppleDevice, Computer, PrivateAddress,
 }
 
 /// <summary>Something listening on a device: a port and what it usually is.</summary>
@@ -36,6 +36,8 @@ public sealed class Device
     public bool IsGateway { get; set; }
     /// <summary>Answered UPnP discovery (on a router, UPnP lets devices open ports to the internet).</summary>
     public bool Upnp { get; set; }
+    /// <summary>What it announced over UPnP (device and service types).</summary>
+    public List<string> UpnpTypes { get; set; } = new();
     public bool IsThisPc { get; set; }
     /// <summary>The owner's own label, typed by the technician ("Front desk PC").</summary>
     public string Label { get; set; } = "";

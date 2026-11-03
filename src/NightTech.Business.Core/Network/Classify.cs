@@ -1,21 +1,30 @@
+using System.Text.RegularExpressions;
+
 namespace NightTech.Business.Core.Network;
 
 /// <summary>Works out what kind of device each one is (from its maker, name and what it offers), and what's worth a note.</summary>
 public static class Classify
 {
-    private static bool Maker(Device d, params string[] names) =>
-        names.Any(n => d.Maker.Contains(n, StringComparison.OrdinalIgnoreCase) || d.Model.Contains(n, StringComparison.OrdinalIgnoreCase));
+    private static bool Word(string text, string word) =>
+        text.Length > 0 && Regex.IsMatch(text, @"(?<![A-Za-z0-9])" + Regex.Escape(word) + @"(?![A-Za-z0-9])", RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(50));
+
+    /// <summary>The maker (or the model it announces) contains one of these as a whole word: "Nest" isn't "Finest", "Ring" isn't "Engineering".</summary>
+    private static bool Maker(Device d, params string[] names) => names.Any(n => Word(d.Maker, n) || Word(d.Model, n));
+
+    /// <summary>The maker is exactly one of these (for names that are also common words, like Square or Ring).</summary>
+    private static bool MakerIs(Device d, params string[] names) => names.Any(n => d.Maker.Equals(n, StringComparison.OrdinalIgnoreCase));
 
     private static bool Named(Device d, params string[] parts) =>
-        parts.Any(p => d.Name.Contains(p, StringComparison.OrdinalIgnoreCase) || d.Model.Contains(p, StringComparison.OrdinalIgnoreCase)
-                       || d.Services.Any(s => s.Detail.Contains(p, StringComparison.OrdinalIgnoreCase)));
+        parts.Any(p => Word(d.Name, p) || Word(d.Model, p) || d.Services.Any(s => Word(s.Detail, p)) || d.UpnpTypes.Any(t => t.Contains(p, StringComparison.OrdinalIgnoreCase)));
 
     public static string Label(DeviceKind k) => k switch
     {
         DeviceKind.Router => "Router / gateway",
         DeviceKind.NetworkGear => "Network equipment (switch, Wi-Fi access point)",
         DeviceKind.WindowsPc => "Windows computer",
+        DeviceKind.Computer => "Computer (firewall on, details hidden)",
         DeviceKind.Mac => "Mac",
+        DeviceKind.AppleDevice => "Apple device (Mac, Apple TV or HomePod)",
         DeviceKind.LinuxDevice => "Linux device",
         DeviceKind.Server => "Server",
         DeviceKind.Printer => "Printer",
@@ -23,6 +32,7 @@ public static class Classify
         DeviceKind.Camera => "Camera or video recorder",
         DeviceKind.Phone => "Phone or tablet",
         DeviceKind.Tablet => "Tablet",
+        DeviceKind.PrivateAddress => "Phone, tablet or laptop (private address)",
         DeviceKind.TvOrStreamer => "TV or streaming device",
         DeviceKind.SmartHome => "Smart device (speaker, plug, thermostat, doorbell)",
         DeviceKind.VoipPhone => "Desk phone (VoIP)",
@@ -32,6 +42,9 @@ public static class Classify
         _ => "Unknown device",
     };
 
+    /// <summary>Kinds that count as the business's own computers.</summary>
+    public static bool IsComputer(DeviceKind k) => k is DeviceKind.WindowsPc or DeviceKind.Computer or DeviceKind.Mac or DeviceKind.Server or DeviceKind.ThisPc;
+
     public static void Apply(Device d)
     {
         (DeviceKind k, string why) = Decide(d);
@@ -39,41 +52,49 @@ public static class Classify
         d.KindReason = why;
     }
 
+    private static readonly string[] PcMakers = { "Dell", "Lenovo", "HP", "Hewlett Packard", "Hewlett-Packard", "Intel Corporate", "Microsoft", "ASUSTek Computer", "Acer", "Micro-Star", "Gigabyte", "ASRock", "Liteon", "AzureWave", "Framework", "Panasonic Mobile", "Toshiba", "Fujitsu" };
+
     private static (DeviceKind, string) Decide(Device d)
     {
         if (d.IsThisPc) return (DeviceKind.ThisPc, "the computer running the scan");
         if (d.IsGateway) return (DeviceKind.Router, "the network's gateway");
-        if (Maker(d, "Verifone", "Ingenico", "PAX Technology", "Clover", "Square", "Toast", "Elo Touch", "Posiflex"))
+        if (Maker(d, "Verifone", "Ingenico", "PAX Technology", "Clover Network", "Elo Touch", "Posiflex") || MakerIs(d, "Square", "Toast"))
             return (DeviceKind.PosTerminal, "made by a card-terminal maker");
-        if (d.Has(9100) || d.Has(631) || d.Has(515) || Maker(d, "Brother", "Seiko Epson", "Epson", "Lexmark", "Xerox", "Ricoh", "Kyocera", "Konica", "Sharp", "Zebra"))
-            return (DeviceKind.Printer, d.Has(9100) || d.Has(631) ? "accepts print jobs" : "made by a printer maker");
-        if (d.Has(554) || d.Has(37777) || Maker(d, "Hikvision", "Dahua", "Amcrest", "Reolink", "Axis Communications", "Hanwha", "Uniview", "Lorex", "Swann", "Wyze") || Named(d, "NVR", "DVR", "IPCam", "camera"))
-            return (DeviceKind.Camera, d.Has(554) ? "streams video (RTSP)" : "made by a camera maker");
         if (Maker(d, "Synology", "QNAP", "Asustor", "Buffalo", "TerraMaster", "Drobo") || Named(d, "DiskStation", "NAS"))
             return (DeviceKind.Nas, "network storage maker or name");
+        if (d.Has(554) || d.Has(37777) || Maker(d, "Hikvision", "Dahua", "Amcrest", "Reolink", "Axis Communications", "Hanwha", "Uniview", "Lorex", "Swann", "Wyze") || Named(d, "NVR", "DVR", "IPCam"))
+            return (DeviceKind.Camera, d.Has(554) ? "streams video (RTSP)" : "made by a camera maker");
+        if (Maker(d, "Apple"))
+        {
+            if (d.Has(62078)) return (DeviceKind.Phone, "iPhone/iPad sync service");
+            if (d.Has(548) || d.Has(22) || d.Has(445) || d.Has(5900) || Named(d, "MacBook", "iMac", "Mac-mini", "Macmini", "MacBook-Pro", "MacBook-Air"))
+                return (DeviceKind.Mac, "Apple computer with file sharing, remote login or a Mac name");
+            if (d.Has(7000) || d.Has(5000) || d.Has(8009)) return (DeviceKind.AppleDevice, "AirPlay: a Mac, Apple TV or HomePod");
+            return (DeviceKind.Phone, "Apple device with no services (usually an iPhone, iPad or Watch)");
+        }
+        if (d.Has(548) || Named(d, "MacBook", "iMac")) return (DeviceKind.Mac, "Mac file sharing or a Mac name");
+        if (d.Has(9100) || d.Has(631) || d.Has(515) || Maker(d, "Brother", "Seiko Epson", "Epson", "Lexmark", "Xerox", "Ricoh", "Kyocera", "Konica Minolta", "Canon"))
+            return (DeviceKind.Printer, d.Has(9100) || d.Has(631) ? "accepts print jobs" : "made by a printer maker");
         if (d.Has(5060) || Maker(d, "Yealink", "Polycom", "Poly", "Grandstream", "Mitel", "Avaya", "Snom", "Fanvil"))
             return (DeviceKind.VoipPhone, "desk-phone maker or SIP");
-        if (Maker(d, "Nintendo", "Sony Interactive") || Named(d, "Xbox", "PlayStation", "PS5", "PS4"))
+        if (Maker(d, "Nintendo", "Sony Interactive Entertainment") || Named(d, "Xbox", "PlayStation", "PS5", "PS4"))
             return (DeviceKind.GameConsole, "game console maker or name");
-        if (d.Has(8060) || Maker(d, "Roku", "Vizio") || Named(d, "Roku", "FireTV", "Fire TV", "AppleTV", "Apple TV", "Chromecast", "BRAVIA", "SmartTV"))
+        if (d.Has(8060) || Maker(d, "Roku", "Vizio") || Named(d, "Roku", "FireTV", "Fire TV", "AppleTV", "Apple TV", "Chromecast", "BRAVIA", "SmartTV", "MediaRenderer"))
             return (DeviceKind.TvOrStreamer, "TV or streamer name, maker or port");
         if (d.Has(8008) && Maker(d, "Google")) return (DeviceKind.TvOrStreamer, "Google Cast device");
-        if (d.Has(3389) || d.Has(135) || (d.Has(445) && d.Has(139)) || d.Has(5357))
-            return (Named(d, "SRV", "SERVER", "DC0", "-DC") ? DeviceKind.Server : DeviceKind.WindowsPc, "Windows services (file sharing, Remote Desktop or RPC)");
-        if (d.Has(62078)) return (DeviceKind.Phone, "iPhone/iPad sync service");
-        if (d.Has(548) || (Maker(d, "Apple") && (d.Has(22) || d.Has(445) || d.Has(5900))) || Named(d, "MacBook", "iMac", "Mac-mini", "Macmini"))
-            return (DeviceKind.Mac, "Mac file sharing or an Apple computer name");
-        if (Maker(d, "Ubiquiti", "TP-Link", "Netgear", "Cisco", "Aruba", "Meraki", "eero", "Linksys", "Ruckus", "MikroTik", "Juniper", "Fortinet", "SonicWall", "Zyxel", "D-Link", "Cambium", "EnGenius", "Arris", "Sagemcom", "Technicolor")
+        if (d.Has(135) || d.Has(3389) || d.Has(5357) || (d.Has(445) && !d.Has(22)))
+            return (Named(d, "SRV", "SERVER", "DC", "DC01", "DC1") || d.Has(53) && d.Has(445) ? DeviceKind.Server : DeviceKind.WindowsPc, "Windows services (file sharing, Remote Desktop or RPC)");
+        if (d.Has(22) && d.Has(445)) return (DeviceKind.LinuxDevice, "Linux with file sharing (Samba)");
+        if (Maker(d, "Ubiquiti", "Netgear", "Cisco", "Aruba", "Meraki", "eero", "Linksys", "Ruckus", "MikroTik", "Juniper", "Fortinet", "SonicWall", "Zyxel", "D-Link", "Cambium", "EnGenius", "Arris", "Sagemcom", "Technicolor", "TP-Link")
             && (d.Has(80) || d.Has(443) || d.Has(22) || d.Has(8443)))
             return (DeviceKind.NetworkGear, "network-equipment maker with a web admin page");
-        if (Maker(d, "Espressif", "Tuya", "Shelly", "Ring", "Nest", "ecobee", "Sonos", "Signify", "Philips Lighting", "Amazon", "iRobot", "Lutron", "Chamberlain", "Wemo", "Belkin", "TP-Link", "Kasa", "LIFX", "Ezviz"))
+        if (Maker(d, "Espressif", "Tuya", "Shelly", "Nest", "Nest Labs", "ecobee", "Sonos", "Signify", "Philips Lighting", "Amazon", "iRobot", "Lutron", "Chamberlain", "Belkin", "TP-Link", "LIFX", "Ezviz") || MakerIs(d, "Ring"))
             return (DeviceKind.SmartHome, "smart-device maker");
-        if (Maker(d, "Apple")) return (DeviceKind.Phone, "Apple device with no services (usually an iPhone, iPad or Watch)");
+        if (PcMakers.Any(m => Word(d.Maker, m))) return (DeviceKind.Computer, $"made by a computer maker ({d.Maker}); its firewall hides the rest");
         if (Maker(d, "Samsung", "Motorola", "OnePlus", "Xiaomi", "Huawei", "OPPO", "vivo", "Google") && d.Services.Count == 0)
             return (DeviceKind.Phone, "phone maker, no services");
-        if (d.RandomMac && d.Services.Count == 0) return (DeviceKind.Phone, "uses a private (random) address, as phones and newer laptops do");
+        if (d.RandomMac && d.Services.Count == 0) return (DeviceKind.PrivateAddress, "uses a private (random) address, as phones and newer laptops do");
         if (d.Has(22) && d.Services.Count <= 3) return (DeviceKind.LinuxDevice, "SSH only");
-        if (d.Has(445)) return (DeviceKind.WindowsPc, "file sharing");
         return (DeviceKind.Unknown, d.Maker.Length > 0 ? "made by " + d.Maker : "no identifying details");
     }
 
@@ -103,7 +124,7 @@ public static class Classify
         if (plainAdmin.Count > 0) f.Add(new(NoteLevel.Info, "Some devices' settings pages aren't encrypted", $"Check none still use the factory password: {List(plainAdmin)}."));
 
         var iot = devices.Count(d => d.Kind is DeviceKind.Camera or DeviceKind.SmartHome or DeviceKind.TvOrStreamer or DeviceKind.GameConsole);
-        var work = devices.Count(d => d.Kind is DeviceKind.WindowsPc or DeviceKind.Mac or DeviceKind.Server or DeviceKind.Nas or DeviceKind.PosTerminal);
+        var work = devices.Count(d => IsComputer(d.Kind) || d.Kind is DeviceKind.Nas or DeviceKind.PosTerminal);
         if (iot >= 2 && work >= 1)
             f.Add(new(NoteLevel.Warning, $"{iot} cameras, TVs or smart devices share the network with the business computers",
                 "These devices rarely get security updates. Put them (and guests) on a separate network or VLAN so a weak one can't reach the computers or card readers."));

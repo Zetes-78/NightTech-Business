@@ -40,8 +40,12 @@ public static class LocalNet
     {
         try
         {
+            // Console tools write in the OEM code page (850/437 and so on): read them that way so Wi-Fi names with accents survive.
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+            Encoding enc;
+            try { enc = Encoding.GetEncoding(CultureInfo.CurrentCulture.TextInfo.OEMCodePage); } catch (ArgumentException) { enc = Encoding.UTF8; }
             var psi = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, exe), args)
-            { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true, StandardOutputEncoding = Encoding.UTF8 };
+            { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true, StandardOutputEncoding = enc };
             using var p = Process.Start(psi)!;
             var outTask = p.StandardOutput.ReadToEndAsync();
             if (!p.WaitForExit(seconds * 1000)) { try { p.Kill(); } catch (InvalidOperationException) { } return ""; }
@@ -56,12 +60,15 @@ public static class LocalNet
     {
         var iface = Run("netsh.exe", "wlan show interfaces");
         var nets = Run("netsh.exe", "wlan show networks mode=bssid");
-        var note = "";
-        if (nets.Contains("location", StringComparison.OrdinalIgnoreCase) && !nets.Contains("BSSID", StringComparison.Ordinal))
-            note = "Windows hides nearby Wi-Fi networks until location access is on (Settings > Privacy & security > Location). The connected network was still read.";
-        if (iface.Length > 0 && !iface.Contains("SSID", StringComparison.Ordinal) && !iface.Contains("State", StringComparison.Ordinal))
-            note = "Wi-Fi details are only read on English Windows.";
-        return (Parse.WlanInterface(iface), Parse.WlanNetworks(nets), note);
+        var connected = Parse.WlanInterface(iface);
+        var nearby = Parse.WlanNetworks(nets);
+        var notes = new List<string>();
+        bool blocked(string t) => t.Contains("location", StringComparison.OrdinalIgnoreCase) && !t.Contains("BSSID", StringComparison.Ordinal);
+        if (blocked(iface) || blocked(nets))
+            notes.Add("Windows hides Wi-Fi details until location access is on (Settings > Privacy & security > Location > let desktop apps access your location). Turn it on, scan again, then turn it back off.");
+        else if (connected is null && iface.Contains("SSID", StringComparison.Ordinal) && !iface.Contains("State", StringComparison.Ordinal))
+            notes.Add("Wi-Fi details couldn't be read on this Windows language.");
+        return (connected, nearby, string.Join(" ", notes));
     }
 
     private static readonly string[] UninstallKeys =
@@ -120,9 +127,14 @@ public static class LocalNet
     /// </summary>
     public static PcInventory Remote(string host, CancellationToken ct)
     {
+        // Only ever a local address found by the scan: never a name a device announced, which could point anywhere.
+        if (!IPAddress.TryParse(host, out var addr) || !Subnet.IsPrivate(addr)) throw new UnauthorizedAccessException("Only local network addresses are read.");
         var opts = new ConnectionOptions { Impersonation = ImpersonationLevel.Impersonate, Authentication = AuthenticationLevel.PacketPrivacy, Timeout = TimeSpan.FromSeconds(15) };
         var reg = new ManagementScope($@"\\{host}\root\default", opts);
-        reg.Connect();
+        // Connecting can hang on a PC that doesn't answer; give up after 20 seconds.
+        var connect = Task.Run(reg.Connect);
+        if (!connect.Wait(TimeSpan.FromSeconds(20), ct)) throw new TimeoutException("no answer from " + host);
+        connect.GetAwaiter().GetResult();
         var pc = new PcInventory { Computer = host, Ip = host, Source = "Read over the network", Taken = DateTime.Now };
         try
         {
@@ -147,6 +159,7 @@ public static class LocalNet
             return outp?["ReturnValue"] is uint rv && rv == 0 ? outp : null;
         }
         string Str(string key, string value) => Call("GetStringValue", ("hDefKey", HKLM), ("sSubKeyName", key), ("sValueName", value)) is ManagementBaseObject o ? (o["sValue"] as string ?? "").Trim() : "";
+        uint Dword(string key, string value) => Call("GetDWORDValue", ("hDefKey", HKLM), ("sSubKeyName", key), ("sValueName", value)) is ManagementBaseObject o && o["uValue"] is uint u ? u : 0;
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var path in UninstallKeys)
         {
@@ -155,7 +168,7 @@ public static class LocalNet
             {
                 var k = path + "\\" + sub;
                 var name = Str(k, "DisplayName");
-                if (name.Length == 0 || Str(k, "ParentKeyName").Length > 0) continue;
+                if (name.Length == 0 || Str(k, "ParentKeyName").Length > 0 || Dword(k, "SystemComponent") == 1) continue;
                 var ver = Str(k, "DisplayVersion");
                 if (!seen.Add(name + "|" + ver)) continue;
                 pc.Programs.Add(new SoftwareItem { Name = name, Version = ver, Publisher = Str(k, "Publisher"), Installed = InstallDate(Str(k, "InstallDate")) });

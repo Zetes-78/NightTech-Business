@@ -178,9 +178,11 @@ public partial class MainWindow : Window
 
     private async void ReadRemote_Click(object sender, RoutedEventArgs e)
     {
-        var pcs = _report.Devices.Where(d => d.Kind is DeviceKind.WindowsPc or DeviceKind.Server && !d.IsThisPc).ToList();
+        var pcs = _report.Devices.Where(d => d.Kind is DeviceKind.WindowsPc or DeviceKind.Server or DeviceKind.Computer && !d.IsThisPc
+                                             && IPAddress.TryParse(d.Ip, out var a) && Subnet.IsPrivate(a)).ToList();
         if (pcs.Count == 0) { Warn("Scan the network first. No other Windows PCs were found."); return; }
-        if (MessageBox.Show(this, $"Read the installed programs from {pcs.Count} Windows PC(s) using your signed-in account ({Environment.UserDomainName}\\{Environment.UserName})?\n\n" +
+        var list = string.Join("\n", pcs.Take(12).Select(d => $"  {d.Ip}  {(d.Label.Length > 0 ? d.Label : d.Name)}")) + (pcs.Count > 12 ? $"\n  ...and {pcs.Count - 12} more" : "");
+        if (MessageBox.Show(this, $"Read the installed programs from these {pcs.Count} PC(s) using your signed-in account ({Environment.UserDomainName}\\{Environment.UserName})?\n\n{list}\n\n" +
                 "Nothing is installed or changed on them. PCs where this account isn't an administrator will be skipped: use 'Save this PC's programs' on those instead.",
                 "Night Tech Network Scan", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
         await Job("Reading programs over the network", async ct =>
@@ -189,16 +191,17 @@ public partial class MainWindow : Window
             foreach (var d in pcs)
             {
                 ct.ThrowIfCancellationRequested();
-                var host = d.Name.Length > 0 ? d.Name : d.Ip;
+                var host = d.Ip;   // always the address the scan found, never a name a device announced
                 BusyText.Text = $"Reading {host}...";
                 try
                 {
                     var pc = await Task.Run(() => LocalNet.Remote(host, ct), ct);
                     pc.Ip = d.Ip;
+                    if (pc.Computer == d.Ip && d.Name.Length > 0) pc.Computer = d.Name;
                     AddPc(pc);
                     ok++;
                 }
-                catch (Exception ex) when (ex is UnauthorizedAccessException or System.Management.ManagementException or System.Runtime.InteropServices.COMException)
+                catch (Exception ex) when (ex is UnauthorizedAccessException or System.Management.ManagementException or System.Runtime.InteropServices.COMException or TimeoutException)
                 {
                     App.Log.Warn($"Couldn't read {host}: {ex.Message.Trim()} (needs an administrator account on that PC, with remote management allowed).");
                 }
@@ -221,7 +224,7 @@ public partial class MainWindow : Window
                 pc.Source = pc.Source.Length > 0 ? pc.Source : "Imported file";
                 AddPc(pc);
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException or InvalidOperationException or NotSupportedException)
             { Warn($"Couldn't import {Path.GetFileName(f)}: {ex.Message}"); }
         }
     }

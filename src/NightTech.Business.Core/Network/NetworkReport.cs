@@ -57,14 +57,31 @@ public sealed class NetworkReport
         // Accepts our own inventory files, and the Field Kit's report (its "programs" list).
         using var doc = JsonDocument.Parse(s);
         var root = doc.RootElement;
-        if (root.TryGetProperty("programs", out var progs) && root.TryGetProperty("computer", out var comp) && comp.ValueKind == JsonValueKind.Object)
+        if (root.ValueKind != JsonValueKind.Object) throw new InvalidDataException("not a program list");
+        if (root.TryGetProperty("programs", out var progs) && progs.ValueKind == JsonValueKind.Array
+            && root.TryGetProperty("computer", out var comp) && comp.ValueKind == JsonValueKind.Object)
         {
-            var pc = new PcInventory { Source = "Field Kit report", Computer = comp.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "", Windows = comp.TryGetProperty("osName", out var o) ? o.GetString() ?? "" : "" };
-            foreach (var p in progs.EnumerateArray())
+            var pc = new PcInventory { Source = "Field Kit report", Computer = Str(comp, "name"), Windows = Str(comp, "osName") };
+            foreach (var p in progs.EnumerateArray().Where(p => p.ValueKind == JsonValueKind.Object))
                 pc.Programs.Add(new SoftwareItem { Name = Str(p, "name"), Version = Str(p, "version"), Publisher = Str(p, "publisher") });
-            return pc;
+            return Tidy(pc);
         }
-        return JsonSerializer.Deserialize<PcInventory>(s, Json);
+        PcInventory? inv;
+        try { inv = JsonSerializer.Deserialize<PcInventory>(s, Json); }
+        catch (InvalidOperationException e) { throw new InvalidDataException("not a program list: " + e.Message); }
+        return inv is null ? null : Tidy(inv);
+    }
+
+    /// <summary>Files can come from anywhere: no missing lists or empty values that would trip the report later.</summary>
+    private static PcInventory Tidy(PcInventory pc)
+    {
+        pc.Computer = Scanner.Clean(pc.Computer ?? "");
+        pc.Ip ??= ""; pc.Windows = Scanner.Clean(pc.Windows ?? ""); pc.Source ??= "";
+        pc.Programs = (pc.Programs ?? new()).Where(p => p is not null && !string.IsNullOrWhiteSpace(p.Name)).Take(5000).Select(p => new SoftwareItem
+        {
+            Name = Scanner.Clean(p.Name), Version = Scanner.Clean(p.Version ?? ""), Publisher = Scanner.Clean(p.Publisher ?? ""), Installed = p.Installed,
+        }).ToList();
+        return pc;
     }
     private static string Str(JsonElement e, string n) => e.TryGetProperty(n, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";
 
@@ -180,7 +197,7 @@ public sealed class NetworkReport
     {
         v ??= "";
         if (v.Length > 0 && "=+-@\t\r".Contains(v[0])) v = "'" + v;   // spreadsheets would run a formula
-        return v.Contains(',') || v.Contains('"') || v.Contains('\n') ? "\"" + v.Replace("\"", "\"\"") + "\"" : v;
+        return v.Contains(',') || v.Contains('"') || v.Contains('\n') || v.Contains('\r') ? "\"" + v.Replace("\"", "\"\"") + "\"" : v;
     }
 
     public string DevicesCsv()
