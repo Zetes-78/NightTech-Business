@@ -19,7 +19,8 @@ NETWORK SCAN (network documenter)
 Only scan a network the owner or manager has said you may check.
 1. On a computer connected to the business network, open "Network Scan\NightTechNetworkScan.exe".
 2. Enter the business, site, Hub ticket, your name and who gave permission. Tick the permission box and click
-   "Scan this network" (1 to 3 minutes). It pings, knocks on common ports and reads devices' own front pages.
+   "Scan this network" (1 to 3 minutes). The Range box has this network filled in: change it to scan part of
+   it (192.168.1.100-150) or add other local networks such as a camera VLAN (192.168.1.0/24, 192.168.20.0/24). It pings, knocks on common ports and reads devices' own front pages.
    It never logs in or changes anything.
 3. Devices tab: label what the owner names ("Front desk printer") and ask about anything Unknown.
 4. Programs tab: this PC is read automatically. "Read Windows PCs over the network" works where your signed-in

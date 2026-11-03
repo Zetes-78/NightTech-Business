@@ -28,6 +28,74 @@ public static class Subnet
         return (hosts, $"{FromUInt(net)}/{prefix}");
     }
 
+    /// <summary>Most addresses one scan will take from a typed range (a /20). Keeps a typo like /8 from running for days.</summary>
+    public const int MaxCustomHosts = 4094;
+
+    /// <summary>
+    /// Addresses from what the technician typed: "192.168.1.0/24", "192.168.1.10-192.168.1.50", "192.168.1.10-50" or
+    /// "192.168.1.7", several separated by commas, spaces or semicolons. Only private (local) addresses are accepted.
+    /// Returns the error in plain words instead of addresses when something isn't right.
+    /// </summary>
+    public static (List<IPAddress> Hosts, string Range, string Error) ParseRanges(string text)
+    {
+        var hosts = new List<IPAddress>();
+        var seen = new HashSet<uint>();
+        var parts = (text ?? "").Split(new[] { ',', ';', ' ', '\n', '\r', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0) return (hosts, "", "Type a range to scan, for example 192.168.1.0/24.");
+        foreach (var raw in parts)
+        {
+            uint first, last;
+            var p = raw.Trim();
+            if (p.Contains('/'))
+            {
+                var bits = p.Split('/');
+                if (bits.Length != 2 || !IPAddress.TryParse(bits[0], out var ip) || ip.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork
+                    || !int.TryParse(bits[1], out var prefix) || prefix is < 8 or > 32)
+                    return (new(), "", $"\"{p}\" isn't a range like 192.168.1.0/24.");
+                uint mask = uint.MaxValue << (32 - prefix);
+                if (prefix == 32) mask = uint.MaxValue;
+                uint net = ToUInt(ip) & mask, bcast = net | ~mask;
+                (first, last) = prefix >= 31 ? (net, bcast) : (net + 1, bcast - 1);   // leave out the network and broadcast addresses
+            }
+            else if (p.Contains('-'))
+            {
+                var bits = p.Split('-');
+                if (bits.Length != 2 || !IPAddress.TryParse(bits[0], out var a) || a.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork)
+                    return (new(), "", $"\"{p}\" isn't a range like 192.168.1.10-192.168.1.50.");
+                IPAddress? b;
+                if (int.TryParse(bits[1], out var lastOctet) && lastOctet is >= 0 and <= 255 && !bits[1].Contains('.'))
+                {
+                    var bytes = a.GetAddressBytes(); bytes[3] = (byte)lastOctet; b = new IPAddress(bytes);   // "192.168.1.10-50"
+                }
+                else if (!IPAddress.TryParse(bits[1], out b) || b.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork)
+                    return (new(), "", $"\"{p}\" isn't a range like 192.168.1.10-192.168.1.50.");
+                (first, last) = (ToUInt(a), ToUInt(b));
+                if (first > last) (first, last) = (last, first);
+            }
+            else if (IPAddress.TryParse(p, out var single) && single.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+                (first, last) = (ToUInt(single), ToUInt(single));
+            else return (new(), "", $"\"{p}\" isn't an address or a range.");
+
+            if (!IsPrivate(FromUInt(first)) || !IsPrivate(FromUInt(last)) || !SamePrivateBlock(first, last))
+                return (new(), "", $"{p} includes addresses outside the local (private) ranges. Only local networks can be scanned.");
+            if ((long)last - first + 1 + hosts.Count > MaxCustomHosts)
+                return (new(), "", $"That's more than {MaxCustomHosts:N0} addresses. Scan a smaller range (for example one /24 at a time).");
+            for (uint v = first; ; v++)
+            {
+                if (seen.Add(v)) hosts.Add(FromUInt(v));
+                if (v == last) break;
+            }
+        }
+        return (hosts, string.Join(", ", parts.Select(x => x.Trim())), "");
+    }
+
+    /// <summary>Both ends sit in the same private block, so a range can't stretch across public addresses between them.</summary>
+    private static bool SamePrivateBlock(uint a, uint b)
+    {
+        static int Block(uint v) => (v >> 24) == 10 ? 1 : (v >> 20) == (172u << 4 | 1) ? 2 : (v >> 16) == (192u << 8 | 168) ? 3 : (v >> 16) == (169u << 8 | 254) ? 4 : 0;
+        return Block(a) != 0 && Block(a) == Block(b);
+    }
+
     /// <summary>Private addresses (10.x, 172.16-31.x, 192.168.x, 169.254.x). The scanner refuses anything else.</summary>
     public static bool IsPrivate(IPAddress ip)
     {

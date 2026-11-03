@@ -82,6 +82,13 @@
                     <TextBlock Text="Network" VerticalAlignment="Center" Width="70" />
                     <ComboBox x:Name="AdapterBox" Width="420" DisplayMemberPath="Name" />
                   </StackPanel>
+                  <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                    <TextBlock Text="Range" VerticalAlignment="Center" Width="70" />
+                    <TextBox x:Name="RangeBox" Width="330" ToolTip="For example 192.168.1.0/24, 192.168.1.10-50, or several separated by commas" />
+                    <Button Content="Reset" Style="{StaticResource PlainButton}" Click="ResetRange_Click" Margin="8,0,0,0" MinHeight="28" Padding="10,2" />
+                  </StackPanel>
+                  <TextBlock x:Name="RangeHint" TextWrapping="Wrap" Margin="70,4,0,0" Foreground="{StaticResource Muted}" FontSize="12"
+                             Text="This network's own range is filled in. Change it to scan part of it (192.168.1.100-150), or add other local networks such as a camera or guest VLAN (192.168.1.0/24, 192.168.20.0/24). Up to 4,094 addresses." />
                   <Button x:Name="ScanButton" Content="Scan this network" Style="{StaticResource PrimaryButton}" Click="Scan_Click" Margin="0,12,0,0" HorizontalAlignment="Left" />
                 </StackPanel>
               </Border>

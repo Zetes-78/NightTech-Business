@@ -80,7 +80,7 @@ public sealed class Scanner
             var d = found.GetOrAdd(ip, _ => new Device { Ip = ip });
             d.Mac = mac;
         }
-        if (self is not null) found.GetOrAdd(self.ToString(), _ => new Device { Ip = self.ToString() }).IsThisPc = true;
+        if (self is not null && hosts.Any(h => h.Equals(self))) found.GetOrAdd(self.ToString(), _ => new Device { Ip = self.ToString() }).IsThisPc = true;
         if (gateway is not null && found.TryGetValue(gateway.ToString(), out var gw)) gw.IsGateway = true;
 
         // 3. What each device offers: the full port list, names, and web page titles.

@@ -71,12 +71,23 @@ public partial class MainWindow : Window
             });
         };
         AdapterBox.SelectionChanged += (_, _) => ShowNet(AdapterBox.SelectedItem as LocalNet.Adapter);
+        RangeBox.TextChanged += (_, _) => CheckRange();
+    }
+
+    private void ResetRange_Click(object sender, RoutedEventArgs e) => ShowNet(AdapterBox.SelectedItem as LocalNet.Adapter);
+
+    private void CheckRange()
+    {
+        var (hosts, _, error) = Subnet.ParseRanges(RangeBox.Text);
+        RangeHint.Foreground = error.Length > 0 ? Brushes.Firebrick : (Brush)FindResource("Muted");
+        RangeHint.Text = error.Length > 0 ? error : $"{hosts.Count:N0} addresses. Devices on other networks (beyond the router) are scanned too, but their makers can't be read from there.";
     }
 
     private void ShowNet(LocalNet.Adapter? a)
     {
         if (a is null) { NetText.Text = "Not connected to a local network."; return; }
         var (_, range) = Subnet.Hosts(a.Ip, a.Prefix, a.Gateway);
+        RangeBox.Text = range;
         NetText.Text = $"Connection: {a.Name}\nThis PC: {a.Ip}/{a.Prefix}\nRange to scan: {range}\nGateway (router): {a.Gateway?.ToString() ?? "none"}\n" +
                        $"DNS: {string.Join(", ", a.Dns)}{(a.Dhcp.Length > 0 ? $"\nDHCP server: {a.Dhcp}" : "")}{(a.Suffix.Length > 0 ? $"\nDomain: {a.Suffix}" : "")}";
     }
@@ -118,11 +129,13 @@ public partial class MainWindow : Window
         { Warn("Only scan with the owner's permission: tick the box and type who gave it."); return; }
         if (AdapterBox.SelectedItem is not LocalNet.Adapter a) { Warn("Pick the network to scan."); return; }
         if (BusinessBox.Text.Trim().Length == 0) { Warn("Type the business name first."); return; }
+        var (hosts, range, rangeError) = Subnet.ParseRanges(RangeBox.Text);
+        if (rangeError.Length > 0) { Warn(rangeError); return; }
+        if (a.Gateway is { } gwa && Subnet.IsPrivate(gwa) && !hosts.Any(h => h.Equals(gwa))) hosts.Add(gwa);   // always look at the router too
 
         await Job("Scanning the network", async ct =>
         {
             _report.Started = DateTime.Now;
-            var (hosts, range) = Subnet.Hosts(a.Ip, a.Prefix, a.Gateway);
             _report.Network = new NetworkInfo
             {
                 Adapter = a.Name, LocalIp = a.Ip.ToString(), PrefixLength = a.Prefix, Gateway = a.Gateway?.ToString() ?? "", DnsServers = a.Dns,

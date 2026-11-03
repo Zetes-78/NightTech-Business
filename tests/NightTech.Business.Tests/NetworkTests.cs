@@ -291,4 +291,26 @@ public class NetworkTests
         r.Evaluate();                                                        // doesn't throw
         Assert.Contains("\"a\rb\"", new NetworkReport { Devices = { new Device { Ip = "1", Name = "a\rb" } } }.DevicesCsv());
     }
+
+    [Fact]
+    public void Typed_ranges_are_read_and_limited_to_local_networks()
+    {
+        var (h1, _, e1) = Subnet.ParseRanges("192.168.1.0/24");
+        Assert.Equal("", e1);
+        Assert.Equal(254, h1.Count);
+        var (h2, _, _) = Subnet.ParseRanges("192.168.1.10-192.168.1.20");
+        Assert.Equal(11, h2.Count);
+        var (h3, _, _) = Subnet.ParseRanges("192.168.1.50-40, 192.168.1.45 10.0.0.5");
+        Assert.Equal(12, h3.Count);                                      // reversed range, a duplicate, and a second network
+        Assert.Equal("10.0.0.5", h3[^1].ToString());
+        var (h4, _, _) = Subnet.ParseRanges("192.168.10.0/24; 192.168.20.0/24");
+        Assert.Equal(508, h4.Count);
+        Assert.Contains("local", Subnet.ParseRanges("8.8.8.0/24").Error);
+        Assert.Contains("local", Subnet.ParseRanges("172.31.255.250-172.32.0.5").Error);
+        Assert.Contains("local", Subnet.ParseRanges("10.255.255.250-11.0.0.5").Error);
+        Assert.Contains("more than", Subnet.ParseRanges("10.0.0.0/16").Error);
+        Assert.Contains("isn't", Subnet.ParseRanges("192.168.1.0/40").Error);
+        Assert.Contains("isn't", Subnet.ParseRanges("printer").Error);
+        Assert.NotEqual("", Subnet.ParseRanges("  ").Error);
+    }
 }
