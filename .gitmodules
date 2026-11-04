@@ -1,0 +1,3 @@
+[submodule "external/NightTech-Shield"]
+	path = external/NightTech-Shield
+	url = https://github.com/Zetes-78/NightTech-Shield

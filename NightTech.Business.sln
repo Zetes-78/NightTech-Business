@@ -19,12 +19,24 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFA8}") = "NightTech.Business.Tests", 
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NightTech.PrivateAi", "src\NightTech.PrivateAi\NightTech.PrivateAi.csproj", "{1C449F31-0947-4A2C-98BB-92EDAD4AC7F0}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NightTech.Sentinel.Agent", "src\NightTech.Sentinel.Agent\NightTech.Sentinel.Agent.csproj", "{6CB1A109-6EAB-4488-ACF0-B0A652A289B7}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NightTech.Sentinel.Tray", "src\NightTech.Sentinel.Tray\NightTech.Sentinel.Tray.csproj", "{4857A3F1-FC2F-4DEA-9DA2-06F1CBC48C56}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
 		Release|Any CPU = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{4857A3F1-FC2F-4DEA-9DA2-06F1CBC48C56}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4857A3F1-FC2F-4DEA-9DA2-06F1CBC48C56}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4857A3F1-FC2F-4DEA-9DA2-06F1CBC48C56}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4857A3F1-FC2F-4DEA-9DA2-06F1CBC48C56}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6CB1A109-6EAB-4488-ACF0-B0A652A289B7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6CB1A109-6EAB-4488-ACF0-B0A652A289B7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6CB1A109-6EAB-4488-ACF0-B0A652A289B7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6CB1A109-6EAB-4488-ACF0-B0A652A289B7}.Release|Any CPU.Build.0 = Release|Any CPU
 		{223C9755-8C37-4E82-BB5A-007CF262369B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{223C9755-8C37-4E82-BB5A-007CF262369B}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{223C9755-8C37-4E82-BB5A-007CF262369B}.Release|Any CPU.ActiveCfg = Release|Any CPU
@@ -51,6 +63,8 @@ Global
 		{D4C1F7A2-3B58-4E9A-8C21-7F5E9B3A6D10}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
+		{4857A3F1-FC2F-4DEA-9DA2-06F1CBC48C56} = {6FA3E3B1-0A9A-4CF2-9853-3D34D4488EDA}
+		{6CB1A109-6EAB-4488-ACF0-B0A652A289B7} = {6FA3E3B1-0A9A-4CF2-9853-3D34D4488EDA}
 		{D4C1F7A2-3B58-4E9A-8C21-7F5E9B3A6D10} = {6FA3E3B1-0A9A-4CF2-9853-3D34D4488EDA}
 		{223C9755-8C37-4E82-BB5A-007CF262369B} = {6FA3E3B1-0A9A-4CF2-9853-3D34D4488EDA}
 		{93CF7326-5ABD-418B-86CA-B2BF9979351F} = {6FA3E3B1-0A9A-4CF2-9853-3D34D4488EDA}

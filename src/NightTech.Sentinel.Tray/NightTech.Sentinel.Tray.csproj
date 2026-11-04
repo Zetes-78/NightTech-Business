@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The Sentinel icon in the taskbar: status, Request help, Night Tech contact links, and permission prompts. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <RootNamespace>NightTech.Sentinel.Tray</RootNamespace>
+    <AssemblyName>NightTechSentinel</AssemblyName>
+    <ApplicationIcon>Assets\sentinel.ico</ApplicationIcon>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <Version>0.1.0</Version>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <Company>Night Tech Solutions</Company>
+    <Product>Night Tech Sentinel</Product>
+    <Copyright>Copyright (c) Night Tech Solutions</Copyright>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NightTech.Business.Core\NightTech.Business.Core.csproj" />
+    <EmbeddedResource Include="Assets\sentinel.ico" LogicalName="sentinel.ico" />
+    <EmbeddedResource Include="Assets\sentinel-alert.ico" LogicalName="sentinel-alert.ico" />
+    <EmbeddedResource Include="Assets\nighttech-logo.png" LogicalName="nighttech-logo.png" />
+  </ItemGroup>
+
+</Project>

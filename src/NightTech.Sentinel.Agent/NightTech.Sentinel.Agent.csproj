@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Night Tech Sentinel agent: a Windows service (LocalSystem) on each client PC. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- WinForms and GDI only for the remote desktop helper (screen capture and the on-screen banner). -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <RootNamespace>NightTech.Sentinel.Agent</RootNamespace>
+    <AssemblyName>NightTechSentinelAgent</AssemblyName>
+    <Version>0.1.0</Version>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <Company>Night Tech Solutions</Company>
+    <Product>Night Tech Sentinel</Product>
+    <Copyright>Copyright (c) Night Tech Solutions</Copyright>
+    <ApplicationIcon>..\NightTech.Sentinel.Tray\Assets\sentinel.ico</ApplicationIcon>
+    <NoWarn>$(NoWarn);CS8933</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.1" />
+    <PackageReference Include="System.Management" Version="8.0.0" />
+    <PackageReference Include="System.Diagnostics.EventLog" Version="8.0.1" />
+    <ProjectReference Include="..\NightTech.Business.Core\NightTech.Business.Core.csproj" />
+    <ProjectReference Include="..\..\external\NightTech-Shield\src\NightTech.Shield.Core\NightTech.Shield.Core.csproj" />
+    <!-- Night Tech Shield's own Windows checks and fixes, shared from the Shield repository (a git submodule). -->
+    <Compile Include="..\..\external\NightTech-Shield\src\NightTech.Shield\Windows\*.cs" Link="Shield\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>
