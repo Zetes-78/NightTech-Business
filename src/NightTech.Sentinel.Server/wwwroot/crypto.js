@@ -1,6 +1,6 @@
-// Night Tech Sentinel: the tech's signing key and encrypted sessions, with the browser's built-in WebCrypto.
-// The signing key is made in this browser and can't be exported, so the server never has it: PCs only do what this
-// key signs. Session keys are made fresh for each session.
+// Night Tech Sentinel: encrypted remote sessions, with the browser's built-in WebCrypto.
+// Commands are NOT signed here: the console only asks, and the tech approves and signs in Sentinel Signer on their
+// own PC. Session keys are made fresh for each session.
 'use strict';
 
 const SentinelCrypto = (() => {
@@ -93,6 +93,8 @@ const SentinelCrypto = (() => {
    * session, then returns { seal(bytes), open(frame) }.
    */
   async function completeSession(s, deviceId, devicePublicKey, answer) {
+    // A PC's ID is made from its key, so the server can't swap in a different key for it.
+    if (deviceId !== 'dev_' + await keyId(devicePublicKey)) throw new Error("The PC's key doesn't match its ID. Don't connect.");
     const payload = unb64(answer.payload);
     if (!await verify(devicePublicKey, payload, answer.signature)) throw new Error("The PC's answer wasn't signed by its own key.");
     const a = JSON.parse(new TextDecoder().decode(payload));
@@ -132,5 +134,5 @@ const SentinelCrypto = (() => {
 
   const readable = id => id.match(/.{1,4}/g).join(' ');
 
-  return { signingKey, makeSigningKey, signCommand, checkDeviceKey, newSession, completeSession, keyId, readable };
+  return { checkDeviceKey, newSession, completeSession, keyId, readable };
 })();

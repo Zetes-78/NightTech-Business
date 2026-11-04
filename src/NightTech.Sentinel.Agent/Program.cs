@@ -66,6 +66,12 @@ static async Task<int> Enroll(string[] a)
             return 3;
         }
         var answer = await res.Content.ReadFromJsonAsync<EnrollResponse>(SignedCommand.Json) ?? throw new InvalidOperationException("Empty answer from the server.");
+        // The ID must come from this PC's own key, so no other PC can share it.
+        if (answer.DeviceId != SentinelCrypto.DeviceId(req.PublicKey))
+        {
+            Console.Error.WriteLine("The server gave this PC an ID that doesn't match its key, so it wasn't set up.");
+            return 4;
+        }
         // Only keys named in the code the tech gave, and only if each really is the key its ID says.
         var keys = answer.TechKeys.Where(k => token.KeyIds.Contains(k.KeyId) && SafeKeyId(k.PublicKey) == k.KeyId).ToList();
         if (keys.Count == 0)

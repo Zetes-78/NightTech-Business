@@ -140,6 +140,7 @@ public class SentinelTests
         Assert.Equal(Decision.AskFirst, p.Decide(CommandKind.Restart));
         Assert.Equal(Decision.AskFirst, p.Decide(CommandKind.ShieldFix));
         Assert.Equal(Decision.AskFirst, p.Decide(CommandKind.UpdateTrustedKeys));
+        Assert.Equal(Decision.AskFirst, new AgentPolicy { Unattended = true }.Decide(CommandKind.UpdateTrustedKeys));
         Assert.Equal(Decision.Refuse, p.Decide((CommandKind)999));
     }
 

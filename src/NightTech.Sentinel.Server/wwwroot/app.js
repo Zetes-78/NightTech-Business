@@ -145,11 +145,25 @@ async function showDevices() {
       : h('p', { class: 'muted' }, 'No computers yet. Add a client, make an enrollment code, and install Sentinel on their PCs.'));
 }
 
-// Sign and send a command to one PC.
+// Ask for an action on one PC. It only happens once the tech approves it in Sentinel Signer, which signs it.
+const waitingBox = h('div', { class: 'notice', role: 'status', hidden: true });
+document.body.append(waitingBox);
 async function send(deviceId, kind, args = {}, reason = '', minutes = 30) {
-  const { command, signed } = await SentinelCrypto.signCommand({ deviceId, kind, args, reason, tech: me.name || me.user, minutes });
-  const r = await api(`/api/devices/${deviceId}/commands`, { method: 'POST', body: signed });
-  return { command, delivered: r.delivered };
+  const { id } = await api(`/api/devices/${deviceId}/requests`, { method: 'POST', body: { kind, args, reason, minutes } });
+  waitingBox.hidden = false;
+  waitingBox.textContent = 'Approve this in Sentinel Signer on your PC...';
+  try {
+    const until = Date.now() + 10 * 60000;
+    while (Date.now() < until) {
+      await new Promise(r => setTimeout(r, 1500));
+      const st = await api('/api/requests/' + id);
+      if (st.status === 'Approved') return { delivered: st.delivered };
+      if (st.status === 'Rejected') throw new Error('You turned that down in Sentinel Signer.');
+      if (st.status === 'Expired') throw new Error("It wasn't approved in time.");
+      if (st.error) waitingBox.textContent = st.error;
+    }
+    throw new Error("It wasn't approved in time.");
+  } finally { waitingBox.hidden = true; }
 }
 
 async function showDevice(id) {
@@ -285,11 +299,11 @@ async function startSession(d, kind) {
   if (!await SentinelCrypto.checkDeviceKey(d.summary.id, d.publicKey))
     throw new Error("This PC's key has changed since this browser last saw it. Don't connect: call Night Tech's lead tech. (Reinstalling Sentinel also changes it.)");
   const reason = prompt('Reason (shown to the person at the PC when they are asked):', kind === 'RemoteDesktop' ? 'Helping with your computer' : 'Maintenance') ?? '';
-  const res = await send(d.summary.id, kind, { sessionId: s.sessionId, browserKey: s.publicKey }, reason, 15);
+  const res = await send(d.summary.id, kind, { sessionId: s.sessionId, browserKey: s.publicKey }, reason, 30);
   const ws = new WebSocket(`wss://${location.host}/api/console/session/${s.sessionId}`);
   ws.binaryType = 'arraybuffer';
   const status = h('p', { class: 'notice' }, res.delivered ? 'Waiting for the person at the PC to allow it...' : 'The PC is offline: it will be asked at its next check-in (within 15 minutes).');
-  let crypto = null;
+  let crypto = null, inbox = Promise.resolve(), outbox = Promise.resolve();
   const handlers = { onMessage: () => {}, onEnd: () => {} };
   ws.onmessage = async ev => {
     if (!crypto) {
@@ -300,11 +314,15 @@ async function startSession(d, kind) {
       catch (e) { status.textContent = e.message; ws.close(); }
       return;
     }
-    try { handlers.onMessage(await crypto.open(ev.data)); }
-    catch { status.textContent = 'The connection was tampered with, so it was closed.'; ws.close(); }
+    // Frames are opened one at a time, in the order they arrived.
+    inbox = inbox.then(async () => {
+      try { await handlers.onMessage(await crypto.open(ev.data)); }
+      catch { status.textContent = 'The connection was tampered with, so it was closed.'; ws.close(); }
+    });
   };
   ws.onclose = () => { status.textContent = 'Session ended.'; handlers.onEnd(); };
-  const sendInner = async bytes => { if (crypto && ws.readyState === 1) ws.send(await crypto.seal(bytes)); };
+  // Sealing and sending happen in order, so the PC always sees counters going up.
+  const sendInner = bytes => (outbox = outbox.then(async () => { if (crypto && ws.readyState === 1) ws.send(await crypto.seal(bytes)); }).catch(() => {}));
   const control = obj => { const j = new TextEncoder().encode(JSON.stringify(obj)); const b = new Uint8Array(j.length + 1); b[0] = 1; b.set(j, 1); return b; };
   return { ws, status, handlers, sendInner, control, end: () => { sendInner(control({ t: 'end' })); setTimeout(() => ws.close(), 300); } };
 }
@@ -404,41 +422,34 @@ async function showClients() {
       return h('div', { class: 'card' },
         h('div', { class: 'row' }, h('b', {}, c.name), h('span', { class: 'muted' }, `${c.devices} computer${c.devices === 1 ? '' : 's'}`), c.alerts ? h('span', { class: 'Warning' }, `${c.alerts} alerts`) : null,
           h('span', { class: 'right' }),
-          h('button', { onclick: () => run(out, () => enrollment(c, out)) }, 'Enrollment code'),
+          h('span', { class: 'small muted' }, 'Enrollment codes: Sentinel Signer'),
           h('a', { class: 'btn', href: `/api/clients/${c.id}/report?month=${lastMonth}`, target: '_blank', rel: 'noopener' }, 'Last month\'s report')),
         c.contact || c.email ? h('div', { class: 'small muted' }, [c.contact, c.email].filter(Boolean).join(' · ')) : null, out);
     }),
     form);
 }
 
-async function enrollment(c, out) {
-  const keys = (await api('/api/me')).allKeys;
-  if (!keys.length) throw new Error('No technician has a signing key yet. Make one in Settings first.');
-  const r = await api(`/api/clients/${c.id}/codes`, { method: 'POST', body: { days: 7, uses: 25 } });
-  const json = JSON.stringify({ server: location.origin, code: r.code, keyIds: keys.map(k => k.keyId), client: c.name });
-  const token = 'NTS1.' + btoa(unescape(encodeURIComponent(json))).replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
-  out.replaceChildren(h('div', { class: 'notice' },
-    h('p', {}, `Install Sentinel on ${c.name}'s computers with this code. It works for ${r.uses} PCs until ${when(r.expiresUtc)}, and makes each PC trust these technicians: ${keys.map(k => `${k.tech} (${SentinelCrypto.readable(k.keyId).slice(0, 9)})`).join(', ')}.`),
-    h('p', { class: 'token' }, token),
-    h('p', { class: 'small' }, 'Run the installer and paste the code when it asks, or install silently: ', h('span', { class: 'token' }, `NightTechSentinel-Setup.exe /VERYSILENT /CODE=${token}`)),
-    h('p', { class: 'small muted' }, 'For a server or a PC nobody sits at, add /UNATTENDED=1 so technicians can connect without someone clicking Allow.')));
-}
-
 // ---------------- settings ----------------
 async function showSettings() {
   const info = await api('/api/me');
-  const local = await SentinelCrypto.signingKey();
+  const techs = await api('/api/techs');
   const err = errorBox(), msg = h('p');
-  const registered = local && info.keys.some(k => k.keyId === local.keyId);
+  const pub = h('textarea', { rows: 3, placeholder: "Paste the public key from Sentinel Signer's My key tab", 'aria-label': 'Signer public key' });
   const keyCard = h('div', { class: 'card' },
-    h('h2', {}, "This browser's signing key"),
-    h('p', { class: 'muted' }, 'Commands are signed by a key made in this browser. It never leaves this computer, so the server can never send a command by itself. PCs trust the keys named in their enrollment code.'),
-    local ? h('p', {}, 'Key ', h('span', { class: 'token' }, SentinelCrypto.readable(local.keyId)), registered ? h('span', { class: 'good' }, '  registered') : h('span', { class: 'Warning' }, '  not registered')) : h('p', { class: 'Warning' }, 'No key yet.'),
-    h('div', { class: 'actions' },
-      !local ? h('button', { class: 'primary', onclick: () => run(err, async () => { const k = await SentinelCrypto.makeSigningKey(); await api('/api/keys', { method: 'POST', body: { publicKey: k.publicKey } }); showSettings(); }) }, 'Make a signing key') : null,
-      local && !registered ? h('button', { class: 'primary', onclick: () => run(err, async () => { await api('/api/keys', { method: 'POST', body: { publicKey: local.publicKey } }); showSettings(); }) }, 'Register it') : null),
-    h('p', { class: 'small muted' }, 'PCs set up before a new key was added keep trusting only their original keys. Clearing this browser\'s data deletes the key.'));
-  const all = h('div', { class: 'card' }, h('h2', {}, 'Technician keys'), h('table', {}, info.allKeys.map(k => h('tr', {}, h('td', {}, k.tech), h('td', { class: 'token small' }, SentinelCrypto.readable(k.keyId))))));
+    h('h2', {}, 'Sentinel Signer keys'),
+    h('p', { class: 'muted' }, 'Actions only happen after you approve them in Sentinel Signer on your own PC, which signs them with a key Windows keeps there. This server never has that key. Client PCs trust the keys named in their enrollment code, which the Signer makes.'),
+    h('table', {}, info.keys.map(k => h('tr', {}, h('td', { class: 'token small' }, SentinelCrypto.readable(k.keyId)),
+      h('td', {}, h('button', { class: 'danger', onclick: () => run(err, async () => { if (!confirm('Remove this key? Approvals from it stop working here. PCs keep trusting it until their keys are replaced.')) return; await api(`/api/keys/${k.keyId}/remove`, { method: 'POST' }); showSettings(); }) }, 'Remove'))))),
+    pub,
+    h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: () => run(err, async () => {
+      const r = await api('/api/keys', { method: 'POST', body: { publicKey: pub.value.trim() } });
+      msg.textContent = 'Registered key ' + SentinelCrypto.readable(r.keyId) + '. Check it matches the one Sentinel Signer shows.';
+      showSettings();
+    }) }, 'Register key')));
+  const team = h('div', { class: 'card' }, h('h2', {}, 'Technicians'),
+    h('table', {}, techs.map(t => h('tr', {}, h('td', {}, t.name || t.user, h('div', { class: 'small muted' }, t.user)),
+      h('td', { class: 'small token' }, t.keys.map(k => SentinelCrypto.readable(k).slice(0, 9)).join(', ') || 'no keys'),
+      h('td', {}, t.disabled ? 'Turned off' : t.user === info.user ? 'You' : h('button', { class: 'danger', onclick: () => run(err, async () => { if (!confirm(`Turn off ${t.user}? They're signed out and can't sign in or approve.`)) return; await api(`/api/techs/${t.id}/disable`, { method: 'POST' }); showSettings(); }) }, 'Turn off'))))));
   const form = h('form', { class: 'card', onsubmit: e => { e.preventDefault(); run(err, async () => {
       const r = await api('/api/techs', { method: 'POST', body: { user: form.tuser.value, name: form.tname.value, password: form.tpass.value } });
       msg.replaceChildren(h('div', { class: 'notice' }, `Give ${form.tname.value} this two-step key for NightKey or their phone (shown once): `, h('span', { class: 'token' }, r.totpSecret)));
@@ -450,7 +461,7 @@ async function showSettings() {
       h('div', {}, h('label', { for: 'tpass' }, 'Starting password'), h('input', { id: 'tpass', name: 'tpass', type: 'password', minlength: 12, required: true, autocomplete: 'new-password' }))),
     h('div', { class: 'actions' }, h('button', {}, 'Add technician')));
   const audit = h('details', { class: 'card' }, h('summary', {}, 'Activity log'), h('pre', {}, (await api('/api/audit')).join('\n')));
-  show(h('h1', {}, 'Settings'), keyCard, all, form, msg, err, audit);
+  show(h('h1', {}, 'Settings'), msg, err, keyCard, team, form, audit);
 }
 
 route(location.hash);

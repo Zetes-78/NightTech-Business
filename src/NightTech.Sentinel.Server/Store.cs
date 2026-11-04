@@ -137,7 +137,13 @@ public sealed class Store
     public void Audit(string who, string what)
     {
         var line = $"{DateTime.UtcNow:O}\t{who.Replace('\t', ' ')}\t{what.Replace('\t', ' ').Replace('\n', ' ').Replace('\r', ' ')}\n";
-        lock (_gate) File.AppendAllText(Path.Combine(_dir, "audit.log"), line);
+        lock (_gate)
+        {
+            var p = Path.Combine(_dir, "audit.log");
+            // Kept, never edited: a full log is set aside under its date and a new one started.
+            if (File.Exists(p) && new FileInfo(p).Length > 10_000_000) File.Move(p, Path.Combine(_dir, $"audit-{DateTime.UtcNow:yyyyMMdd-HHmmss}.log"));
+            File.AppendAllText(p, line);
+        }
     }
 
     public IEnumerable<string> AuditTail(int n)

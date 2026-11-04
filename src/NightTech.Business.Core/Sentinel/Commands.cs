@@ -107,8 +107,8 @@ public sealed class AgentPolicy
         CommandKind.RemoteDesktop or CommandKind.RemoteShell or CommandKind.RunScript => Unattended ? Decision.Run : Decision.AskFirst,
         CommandKind.Restart => RestartWithoutAsking ? Decision.Run : Decision.AskFirst,
         CommandKind.ShieldFix or CommandKind.InstallUpdates => Unattended ? Decision.Run : Decision.AskFirst,
-        // A new trusted key is always confirmed at the PC unless it's unattended.
-        CommandKind.UpdateTrustedKeys => Unattended ? Decision.Run : Decision.AskFirst,
+        // Changing who the PC trusts is always confirmed by a person at the PC, even when it's unattended.
+        CommandKind.UpdateTrustedKeys => Decision.AskFirst,
         _ => Decision.Refuse,
     };
 }
@@ -143,8 +143,11 @@ public sealed class CommandVerifier
         catch (FormatException) { return (null, "not readable"); }
         Command? c;
         try { c = JsonSerializer.Deserialize<Command>(bytes, SignedCommand.Json); }
-        catch (JsonException) { return (null, "not readable"); }
-        if (c is null || c.V != 1 || c.Id.Length is < 16 or > 64) return (null, "not readable");
+        catch (Exception e) when (e is JsonException or NotSupportedException or ArgumentException) { return (null, "not readable"); }
+        if (c is null || c.V != 1 || c.Id is null || c.Id.Length is < 16 or > 64 || c.KeyId is null || c.DeviceId is null) return (null, "not readable");
+        c.Args ??= new();
+        c.Tech ??= "";
+        c.Reason ??= "";
 
         var key = _keys().FirstOrDefault(k => k.KeyId == c.KeyId);
         if (key is null) return (null, "signed by a key this PC doesn't trust");
@@ -185,6 +188,16 @@ public sealed class CommandResult
 /// <summary>Plain words for each command, used in prompts at the PC and in the console.</summary>
 public static class CommandWords
 {
+    private static string NewKeys(Command c)
+    {
+        try
+        {
+            var keys = JsonSerializer.Deserialize<List<TrustedKey>>(c.Arg("keys"), SignedCommand.Json) ?? new();
+            return string.Join(", ", keys.Select(k => $"{k.Tech} (key {SentinelCrypto.Readable(k.KeyId ?? "")})"));
+        }
+        catch (JsonException) { return "(unreadable list)"; }
+    }
+
     public static string Describe(Command c) => c.Kind switch
     {
         CommandKind.RefreshNow => "check this PC now",
@@ -208,5 +221,6 @@ public static class CommandWords
     public static string Prompt(Command c) =>
         $"{(c.Tech.Length > 0 ? c.Tech : "A technician")} from {Brand.Company} would like to {Describe(c)}."
         + (c.Reason.Length > 0 ? $"\n\nReason: {c.Reason}" : "")
+        + (c.Kind == CommandKind.UpdateTrustedKeys ? "\n\nThe PC would trust only: " + NewKeys(c) : "")
         + $"\n\nIf you weren't expecting this, choose Don't allow and call us at {Brand.Phone}.";
 }

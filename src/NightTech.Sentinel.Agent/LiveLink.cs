@@ -80,7 +80,10 @@ public sealed class LiveLink : ISessions
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
-            catch (Exception e) when (e is WebSocketException or IOException or JsonException or InvalidOperationException or HttpRequestException) { }
+            catch (Exception e) when (e is not OutOfMemoryException)
+            {
+                // Anything odd from the server just means reconnecting in a while.
+            }
             try { await Task.Delay(delay, ct); } catch (OperationCanceledException) { return; }
             delay = TimeSpan.FromSeconds(Math.Min(delay.TotalSeconds * 2, 300));
         }
@@ -98,7 +101,7 @@ public sealed class LiveLink : ISessions
             timeout.CancelAfter(TimeSpan.FromSeconds(30));
             await ws.ConnectAsync(uri, timeout.Token);
             var challenge = JsonSerializer.Deserialize<LiveMessage>(await ReceiveText(ws, timeout.Token) ?? "", SignedCommand.Json);
-            if (challenge?.Type != "challenge" || challenge.Nonce.Length < 16) throw new InvalidOperationException("The server didn't send a challenge.");
+            if (challenge?.Type != "challenge" || challenge.Nonce is not { Length: >= 16 and <= 256 }) throw new InvalidOperationException("The server didn't send a challenge.");
             using var key = AgentStore.DeviceKey();
             var proof = SentinelCrypto.Sign(key, Encoding.UTF8.GetBytes(purpose + "|" + challenge.Nonce));
             await SendText(ws, new LiveMessage { Type = "auth", DeviceId = _cfg().DeviceId, Nonce = challenge.Nonce, Signature = proof }, timeout.Token);
@@ -181,11 +184,11 @@ public sealed class LiveLink : ISessions
         _log.Info($"{what} session {sessionId} started by {c.Tech}.");
         await _tray.SessionChanged(true, $"{c.Tech} from Night Tech Solutions is connected ({what}).");
         var sendLock = new SemaphoreSlim(1, 1);
+        // Numbering and sending happen together, so frames always leave in counter order.
         async Task Send(byte[] inner)
         {
-            var frame = crypto.Seal(inner);
             await sendLock.WaitAsync(ct);
-            try { await ws.SendAsync(frame, WebSocketMessageType.Binary, true, ct); }
+            try { await ws.SendAsync(crypto.Seal(inner), WebSocketMessageType.Binary, true, ct); }
             finally { sendLock.Release(); }
         }
         try

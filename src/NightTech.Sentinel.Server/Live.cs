@@ -34,7 +34,7 @@ public sealed class Live
 
     public void ExpectSession(string sessionId, string deviceId, string techId)
     {
-        foreach (var old in _sessions.Where(s => DateTime.UtcNow - s.Value.CreatedUtc > TimeSpan.FromMinutes(10)).ToList()) _sessions.TryRemove(old.Key, out _);
+        foreach (var old in _sessions.Where(s => DateTime.UtcNow - s.Value.CreatedUtc > TimeSpan.FromMinutes(30)).ToList()) _sessions.TryRemove(old.Key, out _);
         _sessions[sessionId] = new Pending { DeviceId = deviceId, TechId = techId, CreatedUtc = DateTime.UtcNow };
     }
 
@@ -81,12 +81,23 @@ public sealed class Live
     public async Task<bool> Push(Device device, QueuedCommand q)
     {
         if (!_agents.TryGetValue(device.Id, out var a) || a.Socket.State != WebSocketState.Open) return false;
+        // Marked as delivered first, so the next check-in can't hand out the same command again.
+        bool mine = _store.Change(() =>
+        {
+            if (q.DeliveredUtc is not null) return false;
+            q.DeliveredUtc = DateTime.UtcNow;
+            _store.SaveDevice(device);
+            return true;
+        });
+        if (!mine) return true;
         await a.Lock.WaitAsync();
-        try { await Send(a.Socket, new { type = "command", command = q.Signed }, CancellationToken.None); }
-        catch (WebSocketException) { return false; }
+        try { await Send(a.Socket, new { type = "command", command = q.Signed }, CancellationToken.None); return true; }
+        catch (WebSocketException)
+        {
+            _store.Change(() => { q.DeliveredUtc = null; _store.SaveDevice(device); });
+            return false;
+        }
         finally { a.Lock.Release(); }
-        _store.Change(() => { q.DeliveredUtc = DateTime.UtcNow; _store.SaveDevice(device); });
-        return true;
     }
 
     public async Task AgentSession(WebSocket ws, string sessionId, CancellationToken ct)
@@ -107,7 +118,8 @@ public sealed class Live
     private async Task Relay(Pending p, string sessionId, CancellationToken ct)
     {
         var both = Task.WhenAll(p.Agent.Task, p.Browser.Task);
-        if (await Task.WhenAny(both, Task.Delay(TimeSpan.FromMinutes(5), ct)) != both)
+        // Long enough for an offline PC's next check-in (every 15 minutes).
+        if (await Task.WhenAny(both, Task.Delay(TimeSpan.FromMinutes(20), ct)) != both)
         {
             _sessions.TryRemove(sessionId, out _);
             p.Done.TrySetResult();

@@ -204,6 +204,7 @@ public sealed class Actions
         foreach (var folder in folders.Where(Directory.Exists))
         {
             if ((new DirectoryInfo(folder).Attributes & FileAttributes.ReparsePoint) != 0) continue;
+            var root = Path.GetFullPath(folder).TrimEnd('\\') + "\\";
             foreach (var path in Directory.EnumerateFiles(folder, "*", options))
             {
                 try
@@ -211,13 +212,12 @@ public sealed class Actions
                     var fi = new FileInfo(path);
                     if (fi.LastWriteTimeUtc > cutoff || fi.Name.StartsWith("NightTech", StringComparison.OrdinalIgnoreCase)) continue;
                     long len = fi.Length;
-                    fi.Delete();
-                    freed += len; files++;
+                    if (SafeDelete.Delete(path, root)) { freed += len; files++; } else skipped++;
                 }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException) { skipped++; }
             }
         }
-        return $"Cleared {files:N0} temporary file{(files == 1 ? "" : "s")} ({Business.Core.Format.Bytes(freed)}). {skipped:N0} in use were left alone.";
+        return $"Cleared {files:N0} temporary file{(files == 1 ? "" : "s")} ({Business.Core.Format.Bytes(freed)}). {skipped:N0} in use or out of place were left alone.";
     }
 
     // ---------------- Logs ----------------
@@ -263,9 +263,12 @@ public sealed class Actions
         if (script.Length == 0) return Done(result, "Failed", "The script was empty.");
         int minutes = int.TryParse(c.Arg("minutes"), out var m) ? Math.Clamp(m, 1, 60) : 10;
         _log.Info($"Running script \"{c.Arg("name")}\" for {c.Tech}:\n{(script.Length > 4000 ? script[..4000] + "..." : script)}");
-        var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes("$ProgressPreference='SilentlyContinue'\n" + script));
+        // The script goes in an administrators-only file (no length limit, and nothing another account can swap).
+        var file = AgentStore.PrivateFile(".ps1", "$ProgressPreference='SilentlyContinue'\n" + script);
         var ps = Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe");
-        var run = await Defender.Run(ps, $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {encoded}", TimeSpan.FromMinutes(minutes), ct);
+        Defender.RunResult run;
+        try { run = await Defender.Run(ps, $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{file}\"", TimeSpan.FromMinutes(minutes), ct); }
+        finally { try { File.Delete(file); } catch (IOException) { } }
         result.Output = CommandResult.Trim(run.Output);
         return run.TimedOut ? Done(result, "TimedOut", $"Stopped after {minutes} minutes.")
             : Done(result, run.ExitCode == 0 ? "Done" : "Failed", $"Exit code {run.ExitCode}.");
@@ -335,4 +338,44 @@ public sealed class AgentLog
         try { EventLog.WriteEntry(Source, m.Length > 30000 ? m[..30000] : m, type, id); }
         catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception) { }
     }
+}
+
+/// <summary>
+/// Deletes a file only if, once opened (without following links), it's really inside the folder being cleaned. This
+/// stops a file or folder being swapped for a link to somewhere else between listing and deleting.
+/// </summary>
+internal static class SafeDelete
+{
+    public static bool Delete(string path, string root)
+    {
+        // DELETE | FILE_READ_ATTRIBUTES, opened as the link itself (FILE_FLAG_OPEN_REPARSE_POINT).
+        using var h = CreateFile(path, 0x00010000 | 0x0080, 0x7, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero);
+        if (h.IsInvalid) return false;
+        if (!GetFileInformationByHandle(h, out var info) || (info.dwFileAttributes & 0x400) != 0) return false;   // a link
+        var sb = new StringBuilder(1024);
+        uint n = GetFinalPathNameByHandle(h, sb, (uint)sb.Capacity, 0);
+        if (n == 0 || n >= sb.Capacity) return false;
+        var final = sb.ToString();
+        if (final.StartsWith(@"\\?\UNC\", StringComparison.Ordinal)) return false;
+        if (final.StartsWith(@"\\?\", StringComparison.Ordinal)) final = final[4..];
+        if (!final.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return false;
+        int delete = 1;
+        return SetFileInformationByHandle(h, 4, ref delete, 4);   // FileDispositionInfo
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct BY_HANDLE_FILE_INFORMATION
+    {
+        public uint dwFileAttributes; public long ftCreationTime, ftLastAccessTime, ftLastWriteTime;
+        public uint dwVolumeSerialNumber, nFileSizeHigh, nFileSizeLow, nNumberOfLinks, nFileIndexHigh, nFileIndexLow;
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+    private static extern Microsoft.Win32.SafeHandles.SafeFileHandle CreateFile(string name, uint access, uint share, IntPtr sa, uint disposition, uint flags, IntPtr template);
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetFileInformationByHandle(Microsoft.Win32.SafeHandles.SafeFileHandle h, out BY_HANDLE_FILE_INFORMATION info);
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetFinalPathNameByHandle(Microsoft.Win32.SafeHandles.SafeFileHandle h, StringBuilder path, uint size, uint flags);
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetFileInformationByHandle(Microsoft.Win32.SafeHandles.SafeFileHandle h, int cls, ref int info, int size);
 }

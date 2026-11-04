@@ -58,19 +58,28 @@ public sealed class TrayLink : IPersonAtPc, IDisposable
 
     private async Task Listen(CancellationToken ct)
     {
+        bool first = true;
         while (!ct.IsCancellationRequested)
         {
             NamedPipeServerStream? pipe = null;
             try
             {
-                pipe = NamedPipeServerStreamAcl.Create(PipeName, PipeDirection.InOut, 8, PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 4096, 4096, Security());
+                // The first one must be new: if another program already made a pipe with this name, it's an impostor.
+                var options = PipeOptions.Asynchronous | (first ? PipeOptions.FirstPipeInstance : PipeOptions.None);
+                pipe = NamedPipeServerStreamAcl.Create(PipeName, PipeDirection.InOut, 8, PipeTransmissionMode.Byte, options, 4096, 4096, Security());
+                first = false;
                 await pipe.WaitForConnectionAsync(ct);
                 var p = pipe;
                 pipe = null;
                 _ = Task.Run(() => Serve(p, ct), ct);
             }
             catch (OperationCanceledException) { pipe?.Dispose(); return; }
-            catch (IOException e) { pipe?.Dispose(); _log.Warn("Tray connection: " + e.Message); await Task.Delay(2000, ct); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                pipe?.Dispose();
+                _log.Warn((first ? "Another program is using Sentinel's connection name, so prompts can't be shown until it's gone. " : "Tray connection: ") + e.Message);
+                await Task.Delay(first ? 30000 : 2000, ct);
+            }
         }
     }
 

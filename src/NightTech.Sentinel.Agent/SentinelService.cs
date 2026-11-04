@@ -25,6 +25,7 @@ public sealed class SentinelService : BackgroundService
     private DateTime _busyUntil = DateTime.MinValue;
     private readonly SemaphoreSlim _wake = new(0);
     private LiveLink? _live;
+    private readonly SemaphoreSlim _verifyLock = new(1, 1);
 
     public SentinelService()
     {
@@ -88,10 +89,15 @@ public sealed class SentinelService : BackgroundService
             return;
         }
         res.EnsureSuccessStatusCode();
+        if (res.Content.Headers.ContentLength is > 4_000_000) throw new InvalidOperationException("The server's answer was too large.");
         var answer = await res.Content.ReadFromJsonAsync<CheckInResponse>(SignedCommand.Json, ct) ?? new CheckInResponse();
+        answer.Commands ??= new();
+        answer.Status ??= "";
 
         // Delivered: these results and the help request are on the server now.
-        _cfg.PendingResults.RemoveAll(r => report.Results.Any(x => x.CommandId == r.CommandId));
+        await _verifyLock.WaitAsync(ct);
+        try { _cfg.PendingResults.RemoveAll(r => report.Results.Any(x => x.CommandId == r.CommandId)); }
+        finally { _verifyLock.Release(); }
         if (_help == report.HelpRequest) _help = "";
         _cfg.CheckInMinutes = Math.Clamp(answer.CheckInMinutes, 5, 240);
         _cfg.LastCheckInUtc = DateTime.UtcNow;
@@ -113,9 +119,18 @@ public sealed class SentinelService : BackgroundService
     /// <summary>Checks a signed command and runs it. Used for check-in commands and ones that arrive over the live link.</summary>
     public async Task Handle(SignedCommand signed, CancellationToken ct)
     {
-        var verifier = new CommandVerifier(_cfg.DeviceId, () => _cfg.TrustedKeys, _cfg.SeenCommands);
-        var (c, why) = verifier.Verify(signed, DateTime.UtcNow);
-        AgentStore.Save(_cfg);   // remember the ID before running, so a crash can't lead to running it twice
+        Command? c;
+        string why;
+        // Commands arrive from the check-in and the live link at the same time: checking and recording each ID happens
+        // one at a time, and is saved before the command runs, so no command can run twice.
+        await _verifyLock.WaitAsync(ct);
+        try
+        {
+            var verifier = new CommandVerifier(_cfg.DeviceId, () => _cfg.TrustedKeys, _cfg.SeenCommands);
+            (c, why) = verifier.Verify(signed, DateTime.UtcNow);
+            AgentStore.Save(_cfg);
+        }
+        finally { _verifyLock.Release(); }
         if (c is null)
         {
             _log.Warn($"A command was refused: it {why}.");
@@ -124,9 +139,14 @@ public sealed class SentinelService : BackgroundService
         _busyUntil = DateTime.UtcNow.AddMinutes(10);
         var result = await _actions.Run(c, Version, ct);
         if (_actions.LastShield is { } s && !ReferenceEquals(s, _shield)) SetShield(s);
-        _cfg.PendingResults.Add(result);
-        if (_cfg.PendingResults.Count > 50) _cfg.PendingResults.RemoveRange(0, _cfg.PendingResults.Count - 50);
-        AgentStore.Save(_cfg);
+        await _verifyLock.WaitAsync(ct);
+        try
+        {
+            _cfg.PendingResults.Add(result);
+            if (_cfg.PendingResults.Count > 50) _cfg.PendingResults.RemoveRange(0, _cfg.PendingResults.Count - 50);
+            AgentStore.Save(_cfg);
+        }
+        finally { _verifyLock.Release(); }
         _wake.Release();
     }
 

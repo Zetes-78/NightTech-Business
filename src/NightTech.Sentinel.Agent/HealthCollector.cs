@@ -72,14 +72,7 @@ public static class HealthCollector
     private static void Drives(HealthReport r)
     {
         const string ns = @"root\Microsoft\Windows\Storage";
-        var counters = new Dictionary<string, ManagementBaseObject>();
-        try
-        {
-            foreach (var c in Query(ns, "SELECT DeviceId, Wear, Temperature, ReadErrorsUncorrected, PowerOnHours FROM MSFT_StorageReliabilityCounter"))
-                counters[Str(c, "DeviceId")] = c;
-        }
-        catch (ManagementException) { r.Notes.Add("Drive wear: Windows didn't report it."); }
-        foreach (var d in Query(ns, "SELECT DeviceId, FriendlyName, SerialNumber, MediaType, HealthStatus, Size FROM MSFT_PhysicalDisk"))
+        foreach (var d in Query(ns, "SELECT ObjectId, DeviceId, FriendlyName, SerialNumber, MediaType, HealthStatus, Size FROM MSFT_PhysicalDisk"))
         {
             var drive = new DriveHealth
             {
@@ -88,7 +81,15 @@ public static class HealthCollector
                 Health = Num(d, "HealthStatus") switch { 0 => "Healthy", 1 => "Warning", 2 => "Unhealthy", _ => "Unknown" },
             };
             if (drive.Serial.Length == 0) drive.Serial = Str(d, "DeviceId");
-            if (counters.TryGetValue(Str(d, "DeviceId"), out var c))
+            ManagementBaseObject? c = null;
+            try
+            {
+                // Wear and errors hang off each disk in Windows' storage classes.
+                var objectId = Str(d, "ObjectId").Replace("\\", "\\\\").Replace("'", "\\'");
+                c = Query(ns, $"ASSOCIATORS OF {{MSFT_PhysicalDisk.ObjectId='{objectId}'}} WHERE ResultClass = MSFT_StorageReliabilityCounter").FirstOrDefault();
+            }
+            catch (ManagementException) { }
+            if (c is not null)
             {
                 drive.WearPercent = Num(c, "Wear") is long w && w is > 0 and <= 100 ? (int)w : null;
                 drive.TemperatureC = Num(c, "Temperature") is long t && t is > 0 and < 120 ? (int)t : null;

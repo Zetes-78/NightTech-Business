@@ -42,10 +42,6 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Messages]
 WelcomeLabel2=This installs [name/ver].%n%nSentinel lets Night Tech Solutions keep an eye on this computer's health, security and backups, and fix problems remotely. A technician can only connect when you allow it, and a banner shows the whole time.%n%nYou'll need the enrollment code Night Tech gave you.
 
-[Dirs]
-Name: "{commonappdata}\Night Tech Solutions"; Permissions: admins-full system-full
-Name: "{commonappdata}\Night Tech Solutions\Sentinel"; Permissions: admins-full system-full
-
 [Files]
 Source: "..\publish\sentinel\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 

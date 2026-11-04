@@ -34,9 +34,29 @@ public static class AgentStore
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private static readonly object Gate = new();
 
+    private static readonly SecurityIdentifier Admins = new(WellKnownSidType.BuiltinAdministratorsSid, null);
+    private static readonly SecurityIdentifier SystemSid = new(WellKnownSidType.LocalSystemSid, null);
+
+    private static DirectorySecurity FolderSecurity(bool usersMayRead)
+    {
+        var sec = new DirectorySecurity();
+        sec.SetAccessRuleProtection(true, false);
+        var inherit = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
+        sec.AddAccessRule(new FileSystemAccessRule(SystemSid, FileSystemRights.FullControl, inherit, PropagationFlags.None, AccessControlType.Allow));
+        sec.AddAccessRule(new FileSystemAccessRule(Admins, FileSystemRights.FullControl, inherit, PropagationFlags.None, AccessControlType.Allow));
+        if (usersMayRead)
+            sec.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null), FileSystemRights.ReadAndExecute, InheritanceFlags.None, PropagationFlags.None, AccessControlType.Allow));
+        sec.SetOwner(Admins);
+        return sec;
+    }
+
+    private static bool OwnedByAdmins(FileSystemSecurity sec) =>
+        sec.GetOwner(typeof(SecurityIdentifier)) is SecurityIdentifier o && (o.Equals(Admins) || o.Equals(SystemSid));
+
     /// <summary>
-    /// Makes Sentinel's folder administrators-and-SYSTEM only, refusing one that someone else made first or that is a
-    /// link to somewhere else (ProgramData lets any account create folders).
+    /// Makes Sentinel's folder administrators-and-SYSTEM only. A new folder is created already locked; one that already
+    /// exists must belong to administrators and not be a link (ProgramData lets any account create folders and files).
+    /// Files in it that another account made are removed.
     /// </summary>
     public static void PrepareFolder()
     {
@@ -44,30 +64,26 @@ public static class AgentStore
         foreach (var path in new[] { company, Folder })
         {
             var dir = new DirectoryInfo(path);
-            if (!dir.Exists) dir.Create();
+            if (!dir.Exists) dir.Create(FolderSecurity(path == company));
             dir.Refresh();
             if ((dir.Attributes & FileAttributes.ReparsePoint) != 0)
                 throw new InvalidOperationException($"{path} is a link to another folder; Sentinel won't use it.");
-            var owner = dir.GetAccessControl().GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
-            if (owner is null || !(owner.IsWellKnown(WellKnownSidType.BuiltinAdministratorsSid) || owner.IsWellKnown(WellKnownSidType.LocalSystemSid)))
-                throw new InvalidOperationException($"{path} was made by another account; Sentinel won't trust it.");
-            var sec = new DirectorySecurity();
-            sec.SetAccessRuleProtection(true, false);
-            var inherit = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
-            sec.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), FileSystemRights.FullControl, inherit, PropagationFlags.None, AccessControlType.Allow));
-            sec.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null), FileSystemRights.FullControl, inherit, PropagationFlags.None, AccessControlType.Allow));
-            if (path == company)
-                sec.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null), FileSystemRights.ReadAndExecute, InheritanceFlags.None, PropagationFlags.None, AccessControlType.Allow));
-            sec.SetOwner(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null));
-            dir.SetAccessControl(sec);
+            if (!OwnedByAdmins(dir.GetAccessControl()))
+                throw new InvalidOperationException($"{path} was made by another account; Sentinel won't trust it. An administrator should delete it and run setup again.");
+            dir.SetAccessControl(FolderSecurity(path == company));
         }
+        foreach (var f in new DirectoryInfo(Folder).GetFiles())
+            if ((f.Attributes & FileAttributes.ReparsePoint) != 0 || !OwnedByAdmins(f.GetAccessControl())) f.Delete();
     }
 
     public static AgentConfig? Load()
     {
         lock (Gate)
         {
-            if (!File.Exists(ConfigPath)) return null;
+            var fi = new FileInfo(ConfigPath);
+            if (!fi.Exists) return null;
+            if ((fi.Attributes & FileAttributes.ReparsePoint) != 0 || !OwnedByAdmins(fi.GetAccessControl()))
+                throw new InvalidOperationException("Sentinel's settings file wasn't made by Sentinel, so it won't be used. Run setup again.");
             return JsonSerializer.Deserialize<AgentConfig>(File.ReadAllText(ConfigPath), Json);
         }
     }
@@ -77,10 +93,32 @@ public static class AgentStore
         lock (Gate)
         {
             PrepareFolder();
-            var tmp = ConfigPath + ".tmp";
-            File.WriteAllText(tmp, JsonSerializer.Serialize(c, Json));
-            File.Move(tmp, ConfigPath, overwrite: true);
+            var tmp = new FileInfo(ConfigPath + ".tmp");
+            if (tmp.Exists) tmp.Delete();
+            var fileSec = new FileSecurity();
+            fileSec.SetAccessRuleProtection(true, false);
+            fileSec.AddAccessRule(new FileSystemAccessRule(SystemSid, FileSystemRights.FullControl, AccessControlType.Allow));
+            fileSec.AddAccessRule(new FileSystemAccessRule(Admins, FileSystemRights.FullControl, AccessControlType.Allow));
+            fileSec.SetOwner(Admins);
+            using (var fs = tmp.Create(FileMode.CreateNew, FileSystemRights.FullControl, FileShare.None, 4096, FileOptions.None, fileSec))
+                JsonSerializer.Serialize(fs, c, Json);
+            File.Move(tmp.FullName, ConfigPath, overwrite: true);
         }
+    }
+
+    /// <summary>An administrators-only working file in Sentinel's folder (for scripts), deleted by the caller.</summary>
+    public static string PrivateFile(string extension, string text)
+    {
+        PrepareFolder();
+        var fi = new FileInfo(Path.Combine(Folder, "run-" + Guid.NewGuid().ToString("N") + extension));
+        var fileSec = new FileSecurity();
+        fileSec.SetAccessRuleProtection(true, false);
+        fileSec.AddAccessRule(new FileSystemAccessRule(SystemSid, FileSystemRights.FullControl, AccessControlType.Allow));
+        fileSec.AddAccessRule(new FileSystemAccessRule(Admins, FileSystemRights.FullControl, AccessControlType.Allow));
+        using (var fs = fi.Create(FileMode.CreateNew, FileSystemRights.FullControl, FileShare.None, 4096, FileOptions.None, fileSec))
+        using (var w = new StreamWriter(fs, new System.Text.UTF8Encoding(true)))
+            w.Write(text);
+        return fi.FullName;
     }
 
     /// <summary>

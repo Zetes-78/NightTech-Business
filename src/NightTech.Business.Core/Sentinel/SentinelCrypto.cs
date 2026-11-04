@@ -16,6 +16,12 @@ public static class SentinelCrypto
     public static string KeyId(string spkiBase64) =>
         Convert.ToHexString(SHA256.HashData(Convert.FromBase64String(spkiBase64)))[..32].ToLowerInvariant();
 
+    /// <summary>
+    /// A PC's ID is worked out from its own public key, so a server can't give two PCs the same ID (which would let one
+    /// signed command run on both) or swap a PC's key without the ID changing.
+    /// </summary>
+    public static string DeviceId(string spkiBase64) => "dev_" + KeyId(spkiBase64);
+
     /// <summary>Groups a key ID so a person can compare it by eye: "3f2a 91c0 ...".</summary>
     public static string Readable(string keyId) =>
         string.Join(' ', Enumerable.Range(0, keyId.Length / 4).Select(i => keyId.Substring(i * 4, 4)));

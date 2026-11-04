@@ -65,13 +65,21 @@ foreach ($t in $tools) {
 $sv = Get-ProjectVersion "src\NightTech.Sentinel.Agent\NightTech.Sentinel.Agent.csproj"
 Write-Host "== Night Tech Sentinel $sv ==" -ForegroundColor Cyan
 foreach ($p in @("src\NightTech.Sentinel.Agent\NightTech.Sentinel.Agent.csproj", "src\NightTech.Sentinel.Tray\NightTech.Sentinel.Tray.csproj")) {
+    # Native files stay next to the exe in Program Files: never unpacked into a folder other accounts can write to.
     dotnet publish $p -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true `
-        -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:Version=$sv -o publish\sentinel
+        -p:IncludeNativeLibrariesForSelfExtract=false -p:DebugType=None -p:Version=$sv -o publish\sentinel
     if ($LASTEXITCODE -ne 0) { throw "Publishing $p failed." }
 }
 & $iscc "/DAppVersion=$sv" installer\NightTechSentinel.iss
 if ($LASTEXITCODE -ne 0) { throw "Building the Sentinel installer failed." }
 Write-Hash "installer\Output\NightTechSentinel-Setup.exe"
+
+# Sentinel Signer, for technicians' own PCs (one exe, nothing to install).
+dotnet publish src\NightTech.Sentinel.Signer\NightTech.Sentinel.Signer.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true `
+    -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:Version=$sv -o publish\signer
+if ($LASTEXITCODE -ne 0) { throw "Publishing Sentinel Signer failed." }
+Copy-Item publish\signer\NightTechSentinelSigner.exe installer\Output\NightTechSentinelSigner.exe
+Write-Hash "installer\Output\NightTechSentinelSigner.exe"
 
 Copy-Item packaging\USB-README.txt "$kit\README.txt"
 $zip = "installer\Output\NightTechBusinessKit-USB.zip"

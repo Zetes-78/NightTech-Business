@@ -219,11 +219,15 @@ public static class DesktopHelper
     /// <summary>Keeps a thread on whichever desktop has the screen (normal, sign-in screen or UAC prompt).</summary>
     private static class Desktop
     {
+        [ThreadStatic] private static IntPtr _current;
+
         public static void FollowInput()
         {
             var d = OpenInputDesktop(0, false, 0x10000000);   // GENERIC_ALL
             if (d == IntPtr.Zero) return;
-            if (!SetThreadDesktop(d)) CloseDesktop(d);
+            if (!SetThreadDesktop(d)) { CloseDesktop(d); return; }
+            if (_current != IntPtr.Zero) CloseDesktop(_current);
+            _current = d;
         }
 
         [DllImport("user32.dll", SetLastError = true)] private static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access);

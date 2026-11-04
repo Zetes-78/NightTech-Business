@@ -29,17 +29,20 @@ public sealed class Auth
         // Always do the slow password check, so a wrong user name takes as long as a wrong password.
         bool passwordOk = Passwords.Check(password ?? "", tech?.PasswordHash ?? Passwords.Hash("x"));
         long? step = tech is null || !passwordOk ? null : Totp.Check(Convert.FromBase64String(tech.TotpSecret), code ?? "", DateTimeOffset.UtcNow);
-        if (tech is null || !passwordOk || step is null || step <= tech.LastTotpStep)
+        // Checking and using up the code happen together, so the same code can't sign in twice at once.
+        bool fresh = step is not null && _store.Change(() =>
+        {
+            if (step <= tech!.LastTotpStep) return false;
+            tech.LastTotpStep = step.Value;
+            _store.SaveTechs();
+            return true;
+        });
+        if (tech is null || !passwordOk || !fresh)
         {
             _failures.AddOrUpdate(key, (1, DateTime.UtcNow), (_, old) => DateTime.UtcNow - old.Since > TimeSpan.FromMinutes(15) ? (1, DateTime.UtcNow) : (old.Count + 1, old.Since));
             _store.Audit(user ?? "", $"Sign-in failed from {ip}");
             return new(false, "That user name, password or code isn't right.", "");
         }
-        _store.Change(() =>
-        {
-            tech.LastTotpStep = step.Value;   // each code works once
-            _store.SaveTechs();
-        });
         _failures.TryRemove(key, out _);
         var token = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
         _sessions[token] = (tech.Id, DateTime.UtcNow, DateTime.UtcNow);

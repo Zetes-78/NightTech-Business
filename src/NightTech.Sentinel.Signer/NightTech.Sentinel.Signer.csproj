@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Sentinel Signer: runs on the technician's own PC. Holds the key client PCs trust, and signs only what the tech approves. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <RootNamespace>NightTech.Sentinel.Signer</RootNamespace>
+    <AssemblyName>NightTechSentinelSigner</AssemblyName>
+    <ApplicationIcon>..\NightTech.Sentinel.Tray\Assets\sentinel.ico</ApplicationIcon>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <Version>0.1.0</Version>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <Company>Night Tech Solutions</Company>
+    <Product>Night Tech Sentinel Signer</Product>
+    <Copyright>Copyright (c) Night Tech Solutions</Copyright>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NightTech.Business.Core\NightTech.Business.Core.csproj" />
+  </ItemGroup>
+
+</Project>
