@@ -6,3 +6,7 @@ installer/Output/
 *.suo
 .vs/
 TestResults/
+
+# Sentinel server secrets and data
+deploy/sentinel/.env
+src/NightTech.Sentinel.Server/data/

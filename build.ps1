@@ -61,6 +61,18 @@ foreach ($t in $tools) {
         Out-File -Encoding ascii "$kit\$($t.Folder)\portable.txt"
 }
 
+# Night Tech Sentinel client: the service and the taskbar icon go in one folder and one installer (not on the USB kit).
+$sv = Get-ProjectVersion "src\NightTech.Sentinel.Agent\NightTech.Sentinel.Agent.csproj"
+Write-Host "== Night Tech Sentinel $sv ==" -ForegroundColor Cyan
+foreach ($p in @("src\NightTech.Sentinel.Agent\NightTech.Sentinel.Agent.csproj", "src\NightTech.Sentinel.Tray\NightTech.Sentinel.Tray.csproj")) {
+    dotnet publish $p -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true `
+        -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:Version=$sv -o publish\sentinel
+    if ($LASTEXITCODE -ne 0) { throw "Publishing $p failed." }
+}
+& $iscc "/DAppVersion=$sv" installer\NightTechSentinel.iss
+if ($LASTEXITCODE -ne 0) { throw "Building the Sentinel installer failed." }
+Write-Hash "installer\Output\NightTechSentinel-Setup.exe"
+
 Copy-Item packaging\USB-README.txt "$kit\README.txt"
 $zip = "installer\Output\NightTechBusinessKit-USB.zip"
 if (Test-Path $zip) { Remove-Item $zip }

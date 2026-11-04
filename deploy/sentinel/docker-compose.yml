@@ -1,0 +1,53 @@
+# Night Tech Sentinel server.
+#
+# Cloud server (a small VPS with a domain name pointed at it):
+#   1. Copy .env.example to .env and set SENTINEL_DOMAIN.
+#   2. docker compose --profile cloud up -d --build
+#   Caddy gets the HTTPS certificate automatically.
+#
+# PC at home or the shop, no ports opened on the router (Cloudflare Tunnel):
+#   1. In Cloudflare Zero Trust, make a tunnel that sends your hostname to http://sentinel:8080, and copy its token into .env.
+#   2. docker compose --profile tunnel up -d --build
+#
+# The first time, read the setup code with:  docker compose logs sentinel | grep "setup code"
+
+services:
+  sentinel:
+    build:
+      context: ../..
+      dockerfile: src/NightTech.Sentinel.Server/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - sentinel-data:/data
+    networks: [sentinel]
+
+  caddy:
+    image: caddy:2.8
+    restart: unless-stopped
+    profiles: ["cloud"]
+    ports: ["80:80", "443:443"]
+    environment:
+      SENTINEL_DOMAIN: ${SENTINEL_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on: [sentinel]
+    networks: [sentinel]
+
+  cloudflared:
+    image: cloudflare/cloudflared:2024.12.2
+    restart: unless-stopped
+    profiles: ["tunnel"]
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on: [sentinel]
+    networks: [sentinel]
+
+volumes:
+  sentinel-data:
+  caddy-data:
+
+networks:
+  sentinel:

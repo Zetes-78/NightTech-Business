@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!-- Night Tech Sentinel server: the tech console and the address client PCs check in with. Runs in Docker. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>NightTech.Sentinel.Server</RootNamespace>
+    <AssemblyName>NightTechSentinelServer</AssemblyName>
+    <Version>0.1.0</Version>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <Company>Night Tech Solutions</Company>
+    <Product>Night Tech Sentinel</Product>
+    <Copyright>Copyright (c) Night Tech Solutions</Copyright>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Update="wwwroot\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NightTech.Business.Core\NightTech.Business.Core.csproj" />
+  </ItemGroup>
+
+</Project>

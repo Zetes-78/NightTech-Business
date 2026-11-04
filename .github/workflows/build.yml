@@ -47,3 +47,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: installer/Output/*
+
+  # The Sentinel server runs on Linux in Docker: build the container the way a server would.
+  sentinel-server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the Sentinel server container
+        run: docker build -f src/NightTech.Sentinel.Server/Dockerfile -t nighttech-sentinel .
