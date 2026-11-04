@@ -214,7 +214,7 @@ internal sealed class SignerForm : Form
         try
         {
             if (approve)
-                await Send<object>(HttpMethod.Post, $"/api/signer/requests/{a.Id}/approve", SignerLogic.Approve(a, _key, _keyId, Name(), DateTime.UtcNow));
+                await Send<object>(HttpMethod.Post, $"/api/signer/requests/{a.Id}/approve", SignerLogic.Approve(a, _key, _keyId, TechName(), DateTime.UtcNow));
             else
                 await Send<object>(HttpMethod.Post, $"/api/signer/requests/{a.Id}/reject");
             _handled.Add(a.Id);
@@ -227,7 +227,7 @@ internal sealed class SignerForm : Form
         await Refresh();
     }
 
-    private string Name() => _cfg.Tech.Length > 0 ? _cfg.Tech : Environment.UserName;
+    private string TechName() => _cfg.Tech.Length > 0 ? _cfg.Tech : Environment.UserName;
 
     // ---------------- enrollment codes ----------------
 
@@ -245,7 +245,7 @@ internal sealed class SignerForm : Form
         void FillKeys()
         {
             keys.Items.Clear();
-            keys.Items.Add(new KeyItem(new TrustedKey { KeyId = _keyId, PublicKey = _publicKey, Tech = Name() + " (this PC)" }), true);
+            keys.Items.Add(new KeyItem(new TrustedKey { KeyId = _keyId, PublicKey = _publicKey, Tech = TechName() + " (this PC)" }), true);
             foreach (var k in _cfg.TeamKeys) keys.Items.Add(new KeyItem(k), true);
         }
         page.Enter += (_, _) => FillKeys();

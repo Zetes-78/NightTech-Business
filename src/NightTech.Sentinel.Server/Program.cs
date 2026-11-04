@@ -93,7 +93,7 @@ app.MapPost("/api/agent/enroll", (EnrollRequest req, HttpContext ctx) =>
     return result;
 }).RequireRateLimiting("strict");
 
-app.MapPost("/api/agent/checkin", async (CheckIn body, HttpContext ctx) =>
+app.MapPost("/api/agent/checkin", (CheckIn body, HttpContext ctx) =>
 {
     var device = store.Device(body.DeviceId);
     if (device is null) return Results.StatusCode(403);
