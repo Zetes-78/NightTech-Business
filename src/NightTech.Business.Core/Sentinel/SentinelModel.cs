@@ -36,6 +36,33 @@ public sealed class HealthReport
 
     /// <summary>A help request the person at the PC sent with the tray icon (empty if none).</summary>
     public string HelpRequest { get; set; } = "";
+
+    /// <summary>Night Tech Shield's findings (adware, hijacks, startup items, Defender detections), most serious first.</summary>
+    public List<SecurityItem> Security { get; set; } = new();
+    /// <summary>When Shield's checks last ran on this PC.</summary>
+    public DateTime? SecurityCheckedUtc { get; set; }
+
+    /// <summary>What happened to commands since the last check-in.</summary>
+    public List<CommandResult> Results { get; set; } = new();
+
+    /// <summary>What this PC allows (set at install), so the console knows before asking.</summary>
+    public AgentPolicy Policy { get; set; } = new();
+
+    public long? UptimeHours => LastBootUtc is { } b ? (long)(TakenUtc - b).TotalHours : null;
+}
+
+/// <summary>One Night Tech Shield finding, as reported to the console.</summary>
+public sealed class SecurityItem
+{
+    public string Id { get; set; } = "";
+    public string Area { get; set; } = "";
+    /// <summary>Risk, Warning or Info.</summary>
+    public string Severity { get; set; } = "";
+    public string Title { get; set; } = "";
+    public string Detail { get; set; } = "";
+    /// <summary>Shield can fix it (and would tick it by default).</summary>
+    public bool Fixable { get; set; }
+    public bool Recommended { get; set; }
 }
 
 public sealed class DriveHealth
@@ -109,6 +136,7 @@ public sealed class Alert
 public sealed class EnrollRequest
 {
     public string Code { get; set; } = "";
+    public string AgentVersion { get; set; } = "";
     public string PublicKey { get; set; } = "";   // SubjectPublicKeyInfo, base64
     public string Computer { get; set; } = "";
 }
@@ -116,6 +144,8 @@ public sealed class EnrollRequest
 public sealed class EnrollResponse
 {
     public string DeviceId { get; set; } = "";
+    /// <summary>Tech keys offered by the server. The PC keeps only those whose IDs are in its enrollment token.</summary>
+    public List<TrustedKey> TechKeys { get; set; } = new();
     public string ClientName { get; set; } = "";
     public int CheckInMinutes { get; set; } = 15;
 }
@@ -131,6 +161,8 @@ public sealed class CheckIn
 public sealed class CheckInResponse
 {
     public int CheckInMinutes { get; set; } = 15;
+    /// <summary>Signed commands waiting for this PC. The PC checks each one itself.</summary>
+    public List<SignedCommand> Commands { get; set; } = new();
     /// <summary>Shown in the tray icon: "All good" or a plain-words status for the person at the PC.</summary>
     public string Status { get; set; } = "";
 }
